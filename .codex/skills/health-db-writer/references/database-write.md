@@ -113,6 +113,13 @@ Standardize report files before importing to ensure consistent paths and traceab
 3. **Internal Links**:
    - `attachments.file_path`: Use the standardized path (e.g., `data/reports/chunzi/pdf/...`).
    - `visits.source_file`: Use the standardized Markdown filename.
+4. **Archive Before Import**:
+   - If the user gives a repo-root folder, loose root-level images, or files in a temporary incoming path, list that location and move the originals into the member's `pdf/`, `md/`, or `images/` directories before import.
+   - Keep original image reports even when you also create a Markdown summary from them.
+   - After moving the files, remove only the empty staging folder; do not delete unrelated files.
+5. **Image-Only Reports**:
+   - When the source is a single image or a set of JPEG/PNG pages, archive those originals under `data/reports/<member_key>/images/` with standardized names.
+   - Then create the Markdown summary and reference both the Markdown and any archived originals in `attachments` when appropriate.
 
 ## Visits
 

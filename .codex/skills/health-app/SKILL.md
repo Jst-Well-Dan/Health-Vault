@@ -18,17 +18,32 @@ description: 管理家庭健康档案应用在本机的安装、初始化、启�
 
 用于新克隆项目后的首次准备。
 
-1. 安装 Python 依赖：
+Windows:
 
 ```powershell
 cd backend
 pip install -r requirements.txt
 ```
 
+macOS:
+
+```bash
+cd backend
+python3.12 -m pip install --user --break-system-packages -r requirements.txt
+```
+
 2. 初始化成员数据：
+
+Windows:
 
 ```powershell
 python scripts/seed_members.py
+```
+
+macOS:
+
+```bash
+python3.12 scripts/seed_members.py
 ```
 
 注意：
@@ -40,8 +55,16 @@ python scripts/seed_members.py
 
 前台启动，适合调试：
 
+Windows:
+
 ```powershell
 cmd /c ".codex\skills\health-app\scripts\start.bat"
+```
+
+macOS:
+
+```bash
+bash ".codex/skills/health-app/scripts/start_macos.sh"
 ```
 
 启动后告诉用户：
@@ -54,20 +77,44 @@ http://127.0.0.1:8000/
 
 后台静默启动，适合日常使用：
 
+Windows:
+
 ```powershell
 wscript ".codex\skills\health-app\scripts\start_hidden.vbs"
 ```
 
+macOS:
+
+```bash
+bash ".codex/skills/health-app/scripts/start_hidden_macos.sh"
+```
+
 ### `/health-app stop` — 停止服务
+
+Windows:
 
 ```powershell
 cmd /c ".codex\skills\health-app\scripts\stop.bat"
 ```
 
+macOS:
+
+```bash
+bash ".codex/skills/health-app/scripts/stop_macos.sh"
+```
+
 ### `/health-app status` — 检查服务状态
+
+Windows:
 
 ```powershell
 netstat -ano | findstr ":8000"
+```
+
+macOS:
+
+```bash
+bash ".codex/skills/health-app/scripts/status_macos.sh"
 ```
 
 - 有 `LISTENING` 行：服务运行中，显示 PID。

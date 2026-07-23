@@ -100,7 +100,9 @@ agent 使用 health-deploy 配置 Tailscale 手机访问
 
 ## 手动启动
 
-如果你熟悉命令行，也可以不借助 agent 手动启动：
+如果你熟悉命令行，也可以不借助 agent 手动启动。
+
+Windows：
 
 ```powershell
 git clone https://github.com/Jst-Well-Dan/Health-Vault-Agent
@@ -111,6 +113,17 @@ pip install -r backend\requirements.txt
 python backend\scripts\seed_members.py
 cd backend
 python -m uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+macOS（直接使用本机 Python 3.12，不创建独立运行环境）：
+
+```bash
+git clone https://github.com/Jst-Well-Dan/Health-Vault-Agent
+cd Health-Vault-Agent
+python3.12 -m pip install --user --break-system-packages -r backend/requirements.txt
+python3.12 backend/scripts/seed_members.py
+cd backend
+python3.12 -m uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 本机访问：

@@ -13,8 +13,9 @@ Treat `data/health.db` as user data. Do not write ad hoc SQL to the real databas
 
 1. Identify the project root. Expected layout includes `backend/database.py`, `backend/scripts/`, `data/health.db`, and `data/mock/health_mock.db`.
 2. Read `references/database-write.md` before shaping or writing data.
-3. Prepare a JSON payload from `assets/visit_import.example.json` or `data/imports/templates/visit_import.example.json`.
-4. For reports converted from Markdown/PDF tables, audit table coverage before writing:
+3. Archive raw source files first. If the user gave a root-level folder, loose images, or files under a temporary incoming path, move them into `data/reports/<member_key>/pdf/`, `data/reports/<member_key>/md/`, or `data/reports/<member_key>/images/` with standardized names before preparing the payload. Do not leave the original report only in the repo root after import.
+4. Prepare a JSON payload from `assets/visit_import.example.json` or `data/imports/templates/visit_import.example.json`.
+5. For reports converted from Markdown/PDF tables, audit table coverage before writing:
 
 ```powershell
 python backend/scripts/audit_report_tables.py --member <member_key> --payload-dir <payload_dir> <report.md> [...]
@@ -22,19 +23,19 @@ python backend/scripts/audit_report_tables.py --member <member_key> --payload-di
 
 Make sure `payload_labs` is plausible against the Markdown table count and expected result rows. A low `payload_labs` count usually means the extraction or manual JSON preparation missed tables; `import_visit_json.py` only writes the labs it is given.
 
-5. Run a dry-run:
+6. Run a dry-run:
 
 ```powershell
 python backend/scripts/import_visit_json.py --file <payload.json> --dry-run
 ```
 
-6. Only after validation and user intent are clear, write:
+7. Only after validation and user intent are clear, write:
 
 ```powershell
 python backend/scripts/import_visit_json.py --file <payload.json> --write
 ```
 
-7. Report the inserted `visit_id`, row counts, database path, and backup path.
+8. Report the inserted `visit_id`, row counts, database path, and backup path.
 
 ## Mock Mode
 
@@ -74,6 +75,8 @@ Handle source files (PDF, Markdown) before or during the import process:
    - Images/Assets: `data/reports/<member_key>/images/`
 3. **Traceability**: Ensure `attachments` in the JSON payload use these standardized paths. Use `source_file` in `visit` and `labs` to point to the primary Markdown report.
 4. **Processing**: If provided a PDF in `data_incoming/`, convert it to Markdown (e.g., using `mineru`), move both files to their respective directories under `data/reports/`, and then perform the database import.
+5. **Default Archiving Rule**: When the raw report still sits in the project root, a user-provided folder, or another staging location, list that location first, confirm the relevant files, then move the originals into the standardized `data/reports/<member_key>/...` directories as part of the same task. For image-only reports, archive the original images even if the database only stores a Markdown summary.
+6. **No Root Leftovers**: After archiving, remove only the now-empty staging folder that held those source files. Do not delete unrelated root files.
 
 ## Table Extraction Lessons
 

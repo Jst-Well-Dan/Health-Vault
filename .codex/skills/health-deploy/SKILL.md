@@ -16,14 +16,30 @@ description: 配置家庭健康档案的手机访问、Tailscale 远程访问和
 
 配置手机访问前，先确认应用已经能在电脑本机访问：
 
+Windows:
+
 ```powershell
 netstat -ano | findstr ":8000"
 ```
 
+macOS:
+
+```bash
+bash ".codex/skills/health-app/scripts/status_macos.sh"
+```
+
 如果服务未运行，先使用 `health-app`：
+
+Windows:
 
 ```powershell
 wscript ".codex\skills\health-app\scripts\start_hidden.vbs"
+```
+
+macOS:
+
+```bash
+bash ".codex/skills/health-app/scripts/start_hidden_macos.sh"
 ```
 
 ## 子命令
@@ -33,6 +49,7 @@ wscript ".codex\skills\health-app\scripts\start_hidden.vbs"
 分步引导用户：
 
 1. 电脑安装 Tailscale：`https://tailscale.com/download/windows`
+   macOS: `https://tailscale.com/download/mac`
 2. 电脑登录 Tailscale，确认出现 `100.x.x.x` 格式 IP。
 3. 手机安装 Tailscale。
 4. 手机使用同一个 Tailscale 账号登录。
@@ -51,6 +68,8 @@ http://<电脑的 Tailscale IP>:8000/
 
 ### `/health-deploy autostart` — 配置开机自启
 
+Windows:
+
 注册 Windows 任务计划，登录后自动后台启动家庭健康档案：
 
 ```powershell
@@ -63,10 +82,32 @@ powershell -ExecutionPolicy Bypass -File ".codex\skills\health-deploy\scripts\se
 Start-ScheduledTask -TaskName "家庭健康档案"
 ```
 
+macOS:
+
+注册 LaunchAgent，登录后自动后台启动家庭健康档案：
+
+```bash
+bash ".codex/skills/health-deploy/scripts/setup_autostart_macos.sh"
+```
+
+完成后可以立即触发验证：
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.health-vault-agent"
+```
+
 ### `/health-deploy remove-autostart` — 移除开机自启
+
+Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File ".codex\skills\health-deploy\scripts\remove_autostart.ps1"
+```
+
+macOS:
+
+```bash
+bash ".codex/skills/health-deploy/scripts/remove_autostart_macos.sh"
 ```
 
 ## 推荐流程
