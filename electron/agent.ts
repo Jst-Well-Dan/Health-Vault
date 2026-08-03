@@ -1,8 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import { Agent, type AgentTool, type BeforeToolCallContext } from "@earendil-works/pi-agent-core";
+import { dirname, join } from "node:path";
+import {
+  AgentHarness,
+  DEFAULT_COMPACTION_SETTINGS,
+  estimateContextTokens,
+  JsonlSessionStorage,
+  Session,
+  shouldCompact,
+  type AgentHarnessTool,
+  type ToolCallEvent,
+} from "@earendil-works/pi-agent-core";
+import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
   type AuthEvent,
   type AuthPrompt,
@@ -79,7 +89,9 @@ class EncryptedCredentialStore implements CredentialStore {
 export class HealthAgent {
   private readonly models;
   private readonly credentials;
-  private agent?: Agent;
+  private agent?: AgentHarness;
+  private session?: Session;
+  private sessionEnv?: NodeExecutionEnv;
   private settings: Settings = { provider: "anthropic", model: "claude-sonnet-4-6" };
   private piDefault?: Pick<Settings, "provider" | "model">;
   private pending = new Map<string, PendingChange>();
@@ -113,6 +125,7 @@ export class HealthAgent {
     } else if (desktopSettings && this.models.getModel(desktopSettings.provider, desktopSettings.model)) {
       this.settings = desktopSettings;
     }
+    await this.openSession();
     this.createAgent();
     this.initialized = true;
   }
@@ -181,9 +194,25 @@ export class HealthAgent {
     const text = message.trim();
     if (!text) return;
     if (text === "/undo") return this.undo();
+    await this.maybeCompact();
     this.responseText = "";
     await this.api("/api/agent/messages", { method: "POST", body: { role: "user", content: text } });
     await this.agent.prompt(text);
+  }
+
+  private async maybeCompact() {
+    if (!this.agent || !this.session) return;
+    const model = this.models.getModel(this.settings.provider, this.settings.model);
+    if (!model) return;
+    const { messages } = await this.session.buildContext();
+    const { tokens } = estimateContextTokens(messages);
+    if (!shouldCompact(tokens, model.contextWindow, DEFAULT_COMPACTION_SETTINGS)) return;
+    try {
+      await this.agent.compact();
+      this.emit({ type: "notice", text: "对话较长，已自动整理更早的历史记录以节省上下文。" });
+    } catch (err) {
+      this.emit({ type: "notice", text: `自动整理历史失败：${(err as Error).message}` });
+    }
   }
 
   stop() { this.agent?.abort(); }
@@ -224,16 +253,33 @@ export class HealthAgent {
     if (callback) { this.responses.delete(id); callback(value); }
   }
 
+  private async openSession() {
+    const userDataPath = dirname(this.settingsPath);
+    const sessionPath = join(userDataPath, "sessions", "default.jsonl");
+    this.sessionEnv = new NodeExecutionEnv({ cwd: userDataPath });
+    const exists = await this.sessionEnv.exists(sessionPath);
+    if (!exists.ok) throw exists.error;
+    const storage = exists.value
+      ? await JsonlSessionStorage.open(this.sessionEnv, sessionPath)
+      : await JsonlSessionStorage.create(this.sessionEnv, sessionPath, {
+        cwd: userDataPath,
+        sessionId: "default",
+      });
+    this.session = new Session(storage);
+  }
+
   private createAgent() {
     const model = this.models.getModel(this.settings.provider, this.settings.model);
-    if (!model) { this.agent = undefined; return; }
-    this.agent = new Agent({
-      initialState: { systemPrompt: SYSTEM_PROMPT, model, tools: this.tools() },
-      streamFn: this.models.streamSimple.bind(this.models),
-      toolExecution: "sequential",
-      beforeToolCall: (context) => this.confirmWrite(context),
+    if (!model || !this.session) { this.agent = undefined; return; }
+    const harness = new AgentHarness({
+      session: this.session,
+      models: this.models,
+      systemPrompt: SYSTEM_PROMPT,
+      model,
+      tools: this.tools(),
     });
-    this.agent.subscribe(async (event) => {
+    harness.on("tool_call", (event) => this.confirmWrite(event));
+    harness.subscribe(async (event) => {
       if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
         this.responseText += event.assistantMessageEvent.delta;
         this.emit({ type: "delta", text: event.assistantMessageEvent.delta });
@@ -242,30 +288,33 @@ export class HealthAgent {
         if (this.responseText.trim()) {
           await this.api("/api/agent/messages", { method: "POST", body: { role: "assistant", content: this.responseText } });
         }
-        this.emit({ type: "done", error: this.agent?.state.errorMessage });
+        const failedMessage = event.messages.find((message) => message.role === "assistant" && "errorMessage" in message);
+        const error = failedMessage && "errorMessage" in failedMessage ? failedMessage.errorMessage : undefined;
+        this.emit({ type: "done", error });
       }
     });
+    this.agent = harness;
   }
 
-  private async confirmWrite(context: BeforeToolCallContext) {
-    const spec = WRITE_SPECS[context.toolCall.name];
+  private async confirmWrite(context: ToolCallEvent) {
+    const spec = WRITE_SPECS[context.toolName];
     if (!spec) return;
-    const args = context.args as Json;
+    const args = context.input as Json;
     const rowId = spec.id?.(args);
     const before = rowId === undefined ? undefined : await this.api(`/api/agent/records/${spec.table}/${encodeURIComponent(rowId)}`);
     const approved = await this.request("approval", {
-      tool: context.toolCall.name,
+      tool: context.toolName,
       before: before || null,
       after: spec.action === "delete" ? null : { ...(before || {}), ...spec.body(args) },
     });
     if (!approved) return { block: true, reason: "用户拒绝了这次改动" };
-    this.pending.set(context.toolCall.id, { table_name: spec.table, row_id: rowId, action: spec.action, before });
+    this.pending.set(context.toolCallId, { table_name: spec.table, row_id: rowId, action: spec.action, before });
   }
 
-  private tools(): AgentTool[] {
-    const read = (name: string, description: string, parameters: TSchema, path: (a: Json) => string) => tool(name, description, parameters, async (_id, args) => this.api(path(args)));
+  private tools(): AgentHarnessTool<undefined>[] {
+    const read = (name: string, description: string, parameters: TSchema, path: (a: Json) => string) => tool(name, description, parameters, async (_id, args, _signal, _onUpdate, _context) => this.api(path(args)));
     const write = (name: string, description: string, parameters: TSchema, method: string, path: (a: Json) => string, body: (a: Json) => Json = (a) => a) =>
-      tool(name, description, parameters, async (callId, args) => {
+      tool(name, description, parameters, async (callId, args, _signal, _onUpdate, _context) => {
         const result = await this.api(path(args), { method, body: method === "DELETE" ? undefined : body(args) });
         const change = this.pending.get(callId);
         if (change) {
@@ -364,11 +413,16 @@ const WRITE_SPECS: Record<string, { table: string; action: PendingChange["action
   delete_attachment: { table: "attachments", action: "delete", id: (a) => a.id, body: () => ({}) },
 };
 
-function tool(name: string, description: string, parameters: TSchema, execute: (id: string, args: Json) => Promise<unknown>): AgentTool {
+function tool(
+  name: string,
+  description: string,
+  parameters: TSchema,
+  execute: (id: string, args: Json, signal: AbortSignal | undefined, onUpdate: unknown, context: undefined) => Promise<unknown>,
+): AgentHarnessTool<undefined> {
   return {
     name, label: name, description, parameters,
-    execute: async (id, args) => {
-      const details = await execute(id, args as Json);
+    execute: async (id, args, signal, onUpdate, context) => {
+      const details = await execute(id, args as Json, signal, onUpdate, context);
       return { content: [{ type: "text", text: JSON.stringify(details, null, 2) }], details };
     },
   };

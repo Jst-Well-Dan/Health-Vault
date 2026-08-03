@@ -44,6 +44,7 @@ function AgentPanel({ onDataChanged }) {
       if (item.url) window.open(item.url, '_blank');
     }
     if (event.type === 'data-changed') onDataChanged?.();
+    if (event.type === 'notice') setNotice(event.text);
     if (event.type === 'fatal') setNotice(event.text);
   };
 
