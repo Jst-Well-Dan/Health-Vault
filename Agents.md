@@ -101,10 +101,10 @@ npm run build
 - 写入后报告 `visit_id`（如有）、影响行数、实际数据库路径和备份路径。
 - 内置健康助手的写操作应展示字段前后对比并获得用户确认；用户输入 `/undo` 时，只撤销最近一项可撤销的 agent 改动，并先说明目标记录。
 
-数据库 payload、字段规则、附件路径、验证方式，以以下文件为准：
+数据库 payload、字段规则、附件路径、验证方式，以以下文件为准（CLI 导入路径已归档，应用内导入以 Electron 桌面应用为准）：
 
-- `.codex/skills/health-db-writer/SKILL.md`
-- `.codex/skills/health-db-writer/references/database-write.md`
+- `archive/cli-import-path/health-db-writer-skill/SKILL.md`
+- `archive/cli-import-path/health-db-writer-skill/references/database-write.md`
 
 ## 目录速览
 
