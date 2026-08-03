@@ -1,7 +1,7 @@
 // Member detail screen backed by REST API data.
 
 const HUMAN_TABS = ['概览', '体检报告', '就医记录', '用药', '附件库', '提醒'];
-const PET_TABS = ['概览', '记事', '疫苗接种', '就医记录', '体重趋势', '附件库', '提醒'];
+const PET_TABS = ['概览', '记事', '疫苗接种', '就医记录', '用药', '体重趋势', '附件库', '提醒'];
 const PET_CARE_KINDS = ['驱虫', '洗澡', '换猫砂'];
 const PET_CARE_KIND_SET = new Set(PET_CARE_KINDS);
 const PET_KIND_LABELS = {
@@ -14,8 +14,14 @@ const petKindLabel = (kind, fallback = '提醒') => PET_KIND_LABELS[kind] || kin
 
 const apiJson = async (path, options) => {
   const res = await fetch(path, options);
-  if (!res.ok) throw new Error(`${path} · ${res.status}`);
-  return res.json();
+  let data = null;
+  try { data = await res.json(); } catch (_) { data = null; }
+  if (!res.ok) {
+    const detail = data?.detail;
+    const message = Array.isArray(detail) ? detail.map(d => d.msg || JSON.stringify(d)).join('；') : detail;
+    throw new Error(message || `${path} · ${res.status}`);
+  }
+  return data;
 };
 
 const apiWrite = (path, method, body) => apiJson(path, {
@@ -29,6 +35,11 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 const cleanPayload = (payload) => Object.fromEntries(
   Object.entries(payload).map(([key, value]) => [key, value === '' ? null : value])
 );
+
+const splitTextList = (value) => String(value || '')
+  .split(/[\n,，]/)
+  .map(s => s.trim())
+  .filter(Boolean);
 
 const extractNumber = (value) => {
   const n = parseFloat(String(value ?? '').replace(/[^\d.-]/g, ''));
@@ -128,6 +139,7 @@ const reportFromAttachment = (a) => ({
   abn: [a.notes || a.tag || '已归档'],
   file: a.filename || a.file_path || `attachment-${a.id}`,
   filePath: a.file_path,
+  raw: a,
 });
 
 const reportTooltip = (r) => [r.t, r.d, r.org, r.file].filter(Boolean).join(' · ');
@@ -749,13 +761,16 @@ const FilePreview = ({ kind, file, url, text, error }) => {
   );
 };
 
-const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged }) => {
+const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, onCreateMember, onEditMember }) => {
   const member = members.find(f => f.key === memberKey) || members[0];
   const isCat = member ? isPet(member) : false;
   const TABS = isCat ? PET_TABS : HUMAN_TABS;
   const [tab, setTab] = React.useState('概览');
   const [detail, setDetail] = React.useState(null);
   const [editor, setEditor] = React.useState(null);
+  const [reportImportOpen, setReportImportOpen] = React.useState(false);
+  const [attachmentUploadOpen, setAttachmentUploadOpen] = React.useState(false);
+  const [attachmentEditor, setAttachmentEditor] = React.useState(null);
   const [data, setData] = React.useState({
     visits: [],
     labs: [],
@@ -870,13 +885,96 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged }
     if (!window.confirm(`删除用药「${item.name}」？`)) return;
     mutateDaily(() => apiWrite(`/api/meds/${item.id}`, 'DELETE'));
   };
+  const saveVisit = (values, item) => mutateDaily(() => {
+    const payload = cleanPayload({ member_key: member.key, ...values, diagnosis: splitTextList(values.diagnosis_text) });
+    delete payload.diagnosis_text;
+    if (item) delete payload.member_key;
+    return item
+      ? apiWrite(`/api/visits/${item.id}`, 'PATCH', payload)
+      : apiWrite('/api/visits', 'POST', payload);
+  });
+  const saveLab = (values, item) => mutateDaily(() => {
+    const payload = cleanPayload({ member_key: member.key, ...values });
+    if (payload.visit_id !== null && payload.visit_id !== undefined) payload.visit_id = Number(payload.visit_id);
+    if (item) delete payload.member_key;
+    return item
+      ? apiWrite(`/api/labs/${item.id}`, 'PATCH', payload)
+      : apiWrite('/api/labs', 'POST', payload);
+  });
   const saveWeight = (values) => mutateDaily(() => apiWrite('/api/weight', 'POST', cleanPayload({ member_key: member.key, ...values })));
   const deleteWeight = (item) => {
     if (!window.confirm(`删除 ${item.date} 的体重记录？`)) return;
     mutateDaily(() => apiWrite(`/api/weight/${item.id}`, 'DELETE'));
   };
+  const deleteVisit = (report) => {
+    const visitId = report?.visitId || report?.id;
+    if (!visitId) return;
+    const title = report.t || report.chief_complaint || `#${visitId}`;
+    if (!window.confirm(`删除就诊记录「${title}」？\n\n仅当没有关联化验、用药或附件时才会删除；不会自动级联删除关联数据。`)) return;
+    mutateDaily(async () => {
+      await apiWrite(`/api/visits/${visitId}`, 'DELETE');
+      if (detail?.visitId === visitId) setDetail(null);
+    });
+  };
+  const deleteLab = (item) => {
+    if (!item?.id) return;
+    const title = [item.panel, item.test_name].filter(Boolean).join(' / ') || `#${item.id}`;
+    if (!window.confirm(`删除化验指标「${title}」？\n\n只删除这一条化验行，不会删除就诊记录或附件。`)) return;
+    mutateDaily(() => apiWrite(`/api/labs/${item.id}`, 'DELETE'));
+  };
+  const saveAttachment = async (values, item) => {
+    if (!item?.id) return;
+    const payload = cleanPayload(values);
+    if (payload.visit_id !== null && payload.visit_id !== undefined) payload.visit_id = Number(payload.visit_id);
+    setSaving(true);
+    setError('');
+    try {
+      await apiWrite(`/api/attachments/${item.id}`, 'PATCH', payload);
+      await loadMemberData();
+      if (onDataChanged) await onDataChanged();
+      setAttachmentEditor(null);
+      if (detail?.attachmentId === item.id) setDetail(null);
+    } catch (err) {
+      setError(err.message || '保存附件失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+  const deleteAttachment = async (report, deleteFile = false) => {
+    const attachmentId = report?.attachmentId || report?.raw?.id;
+    if (!attachmentId) return;
+    const filename = report.file || report.t || `#${attachmentId}`;
+    const message = deleteFile
+      ? `删除附件记录并尝试删除原始归档文件「${filename}」？\n\n此操作会先移除数据库元数据，再删除当前数据目录内的原文件；不会删除就诊、化验等结构化记录。若原文件删除失败，系统会提示你手动核对。`
+      : `仅移除附件记录「${filename}」？\n\n原始归档文件会保留在磁盘上；就诊、化验等结构化记录不受影响。`;
+    if (!window.confirm(message)) return;
+    setSaving(true);
+    setError('');
+    try {
+      await loadMemberData();
+      const result = await apiWrite(`/api/attachments/${attachmentId}?delete_file=${deleteFile ? 'true' : 'false'}`, 'DELETE');
+      await loadMemberData();
+      if (result?.warning) setError(result.warning);
+      if (onDataChanged) await onDataChanged();
+      if (detail?.attachmentId === attachmentId) setDetail(null);
+    } catch (err) {
+      setError(err.message || '删除附件失败');
+    } finally {
+      setSaving(false);
+    }
+  };
   if (!member) {
-    return <div className="sketch" style={{ padding: 40, textAlign: 'center' }}>正在读取成员档案...</div>;
+    return (
+      <section className="sketch shadow" style={{ padding: 32, textAlign: 'center', background: 'var(--paper)' }}>
+        <div className="sec-label">成员档案</div>
+        <div style={{ fontFamily: 'Caveat, cursive', fontSize: 34, fontWeight: 700, margin: '8px 0' }}>还没有可查看的成员</div>
+        <p className="mono" style={{ color: 'var(--ink-soft)' }}>请先新增家庭成员或宠物，再开始整理健康档案。</p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', marginTop: 14 }}>
+          <Btn primary onClick={() => onCreateMember?.('human')}>+ 新增家庭成员</Btn>
+          <Btn onClick={() => onCreateMember?.('pet')}>+ 新增宠物</Btn>
+        </div>
+      </section>
+    );
   }
 
   const attachmentReports = data.attachments.map(reportFromAttachment);
@@ -892,6 +990,14 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged }
     }
   });
   const visitReports = data.visits.map(v => reportFromVisit(v, primaryAttachmentByVisit.get(v.id)));
+  const editVisitReport = (report) => {
+    const visit = data.visits.find(v => v.id === report?.visitId);
+    if (visit) editItem('visit', visit);
+  };
+  const editVisitId = (visitId) => {
+    const visit = data.visits.find(v => v.id === visitId);
+    if (visit) editItem('visit', visit);
+  };
   return (
     <div className="binder" style={{ boxShadow: '4px 4px 0 var(--line)' }}>
       <aside className="binder__side">
@@ -933,7 +1039,9 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged }
               </div>
             </div>
           </div>
-          <div className="member-hero__actions" style={{ display: 'flex', gap: 6 }}>
+          <div className="member-hero__actions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            <Btn ghost onClick={() => onEditMember?.(member)}>编辑资料</Btn>
+            {window.healthReport && <Btn onClick={() => setReportImportOpen(true)}>+ 上传报告/附件</Btn>}
             <Btn primary onClick={openChooser}>+ 新增记录</Btn>
           </div>
         </div>
@@ -963,10 +1071,10 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged }
                   onOpen={setDetail}
                 />
               )}
-              {!isCat && tab === '体检报告' && <TabCheckup data={data} memberKey={member.key} reports={visitReports.filter(isCheckupReport)} onOpen={setDetail} />}
-              {!isCat && tab === '就医记录' && <TabReports reports={visitReports} kind="就医" onOpen={setDetail} />}
+              {!isCat && tab === '体检报告' && <TabCheckup data={data} memberKey={member.key} reports={visitReports.filter(isCheckupReport)} onOpen={setDetail} onAddLab={() => openCreate('lab')} onEditLab={(item) => editItem('lab', item)} onDeleteLab={deleteLab} onEditVisit={editVisitId} />}
+              {!isCat && tab === '就医记录' && <TabReports reports={visitReports} kind="就医" onOpen={setDetail} onAdd={() => openCreate('visit')} onEdit={editVisitReport} onDelete={deleteVisit} />}
               {!isCat && tab === '用药' && <TabMeds meds={data.meds} visits={data.visits} onAdd={() => openCreate('med')} onEdit={(item) => editItem('med', item)} onStop={stopMed} onDelete={deleteMed} />}
-              {!isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} />}
+              {!isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onAddAttachment={() => setAttachmentUploadOpen(true)} onImport={window.healthReport ? () => setReportImportOpen(true) : undefined} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
               {!isCat && tab === '提醒' && <TabReminders items={data.reminders} onAdd={() => openCreate('reminder')} onEdit={(item) => editItem('reminder', item)} onDone={completeReminder} onSkip={skipReminder} onDelete={deleteReminder} />}
 
               {isCat && tab === '概览' && (
@@ -982,14 +1090,36 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged }
                 />
               )}
               {isCat && tab === '记事' && <TabPetCare reminders={data.reminders} attachments={data.attachments} onAdd={() => openCreate('care')} onEdit={(item) => editItem('care', item)} onDelete={deleteReminder} />}
-              {isCat && tab === '疫苗接种' && <TabVax labs={data.labs} attachments={data.attachments} />}
-              {isCat && tab === '就医记录' && <TabReports reports={visitReports} kind="就医" onOpen={setDetail} />}
+              {isCat && tab === '疫苗接种' && <TabVax labs={data.labs} attachments={data.attachments} onAddLab={() => openCreate('lab')} />}
+              {isCat && tab === '就医记录' && <TabReports reports={visitReports} kind="就医" onOpen={setDetail} onAdd={() => openCreate('visit')} onEdit={editVisitReport} onDelete={deleteVisit} />}
+              {isCat && tab === '用药' && <TabMeds meds={data.meds} visits={data.visits} onAdd={() => openCreate('med')} onEdit={(item) => editItem('med', item)} onStop={stopMed} onDelete={deleteMed} />}
               {isCat && tab === '体重趋势' && <TabPetWeight member={member} weights={data.weights} onAdd={() => openCreate('weight')} onDelete={deleteWeight} />}
-              {isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} />}
+              {isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onAddAttachment={() => setAttachmentUploadOpen(true)} onImport={window.healthReport ? () => setReportImportOpen(true) : undefined} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
               {isCat && tab === '提醒' && <TabReminders items={data.reminders.filter(r => !r.done)} onAdd={() => openCreate('reminder')} onEdit={(item) => editItem('reminder', item)} onDone={completeReminder} onSkip={skipReminder} onDelete={deleteReminder} />}
             </>
           )}
         </div>
+
+        {reportImportOpen && <ReportImportModal
+          member={member}
+          onClose={() => setReportImportOpen(false)}
+          onImported={async () => { await loadMemberData(); await onDataChanged?.(); }}
+        />}
+
+        {attachmentUploadOpen && <AttachmentUploadModal
+          member={member}
+          visits={data.visits}
+          onClose={() => setAttachmentUploadOpen(false)}
+          onUploaded={async () => { await loadMemberData(); await onDataChanged?.(); }}
+        />}
+
+        {attachmentEditor && <AttachmentEditorModal
+          attachment={attachmentEditor}
+          visits={data.visits}
+          saving={saving}
+          onClose={() => setAttachmentEditor(null)}
+          onSave={saveAttachment}
+        />}
 
         {editor && (
           <DailyEditor
@@ -1001,6 +1131,9 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged }
             onChoose={openCreate}
             onSaveReminder={saveReminder}
             onSaveCareLog={saveCareLog}
+            visits={data.visits}
+            onSaveVisit={saveVisit}
+            onSaveLab={saveLab}
             onSaveMed={saveMed}
             onSaveWeight={saveWeight}
           />
@@ -1010,16 +1143,77 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged }
   );
 };
 
-const DailyEditor = ({ editor, member, isPetMember, saving, onClose, onChoose, onSaveReminder, onSaveCareLog, onSaveMed, onSaveWeight }) => {
+const AttachmentEditorModal = ({ attachment, visits = [], saving, onClose, onSave }) => {
+  const [form, setForm] = React.useState({
+    date: attachment?.date || todayIso(),
+    title: attachment?.title || '',
+    org: attachment?.org || '',
+    tag: attachment?.tag || '',
+    visit_id: attachment?.visit_id ? String(attachment.visit_id) : '',
+    notes: attachment?.notes || '',
+  });
+
+  React.useEffect(() => {
+    const { body, documentElement } = document;
+    const prevBodyOverflow = body.style.overflow;
+    const prevHtmlOverflow = documentElement.style.overflow;
+    body.style.overflow = 'hidden';
+    documentElement.style.overflow = 'hidden';
+    return () => {
+      body.style.overflow = prevBodyOverflow;
+      documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, []);
+
+  const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="编辑附件元数据">
+      <div className="daily-modal sketch shadow" style={{ maxWidth: 680 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 12, marginBottom: 12 }}>
+          <div>
+            <div className="sec-label">附件库</div>
+            <div style={{ fontFamily: 'Caveat, cursive', fontSize: 32, fontWeight: 700, lineHeight: 1 }}>编辑附件信息</div>
+          </div>
+          <Btn ghost disabled={saving} onClick={onClose}>关闭</Btn>
+        </div>
+        <form className="daily-form" onSubmit={(e) => { e.preventDefault(); onSave(form, attachment); }}>
+          <div className="mono span-2" style={{ color: 'var(--ink-soft)' }}>
+            原始文件：{attachmentFileName(attachment)}。此处只修改附件元数据和就诊关联，不提供替换原始文件入口。
+          </div>
+          <label>标题 *<input required value={form.title} onChange={e => set('title', e.target.value)} /></label>
+          <label>日期 *<input required type="date" value={form.date} onChange={e => set('date', e.target.value)} /></label>
+          <label>机构<input value={form.org} onChange={e => set('org', e.target.value)} placeholder="医院、体检中心或诊所" /></label>
+          <label>标签<input value={form.tag} onChange={e => set('tag', e.target.value)} placeholder="发票、影像、处方、说明等" /></label>
+          <label className="span-2">关联就诊<select value={form.visit_id} onChange={e => set('visit_id', e.target.value)}>
+            <option value="">不关联</option>
+            {visits.map(v => <option key={v.id} value={v.id}>{v.date} · {v.type || '就诊'} · {v.hospital || v.chief_complaint || `#${v.id}`}</option>)}
+          </select></label>
+          <label className="span-2">备注<textarea rows="4" value={form.notes} onChange={e => set('notes', e.target.value)} /></label>
+          <div className="form-actions span-2">
+            <Btn ghost disabled={saving} onClick={onClose}>取消</Btn>
+            <Btn primary type="submit" disabled={saving}>{saving ? '保存中...' : '保存'}</Btn>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+const DailyEditor = ({ editor, member, isPetMember, visits = [], saving, onClose, onChoose, onSaveReminder, onSaveCareLog, onSaveVisit, onSaveLab, onSaveMed, onSaveWeight }) => {
   const title = editor.type === 'choose'
-    ? '新增日常记录'
+    ? '新增记录'
     : editor.type === 'reminder'
       ? editor.item ? '编辑提醒' : '新增提醒'
-      : editor.type === 'med'
-        ? editor.item ? '编辑用药' : '新增用药'
-        : editor.type === 'care'
-          ? editor.item ? '编辑记事' : '添加记事'
-          : '记录体重';
+      : editor.type === 'visit'
+        ? (editor.item ? '编辑就诊记录' : '新增就诊记录')
+        : editor.type === 'lab'
+          ? (editor.item ? '编辑化验指标' : '新增化验指标')
+          : editor.type === 'med'
+            ? editor.item ? '编辑用药' : '新增用药'
+            : editor.type === 'care'
+              ? editor.item ? '编辑记事' : '添加记事'
+              : '记录体重';
 
   React.useEffect(() => {
     const { body, documentElement } = document;
@@ -1045,36 +1239,135 @@ const DailyEditor = ({ editor, member, isPetMember, saving, onClose, onChoose, o
         </div>
         {editor.type === 'choose' && (
           <div className="daily-choice-grid">
+            <button className="daily-choice" onClick={() => onChoose('visit')}>
+              <span>就诊记录</span>
+              <small>门诊、复诊、体检或其他接触记录</small>
+            </button>
+            <button className="daily-choice" onClick={() => onChoose('lab')}>
+              <span>化验指标</span>
+              <small>手动补录单项检验值，可关联就诊</small>
+            </button>
             <button className="daily-choice" onClick={() => onChoose('reminder')}>
               <span>提醒</span>
               <small>复诊、复查、驱虫、疫苗等</small>
             </button>
-            {!isPetMember && (
-              <button className="daily-choice" onClick={() => onChoose('med')}>
-                <span>用药</span>
-                <small>药名、剂量、频次、起止日期</small>
-              </button>
-            )}
+            <button className="daily-choice" onClick={() => onChoose('med')}>
+              <span>用药</span>
+              <small>药名、剂量、频次、起止日期</small>
+            </button>
             {isPetMember && (
               <button className="daily-choice" onClick={() => onChoose('care')}>
                 <span>记事</span>
                 <small>驱虫、洗澡、换猫砂</small>
               </button>
             )}
-            {isPetMember && (
-              <button className="daily-choice" onClick={() => onChoose('weight')}>
-                <span>体重</span>
-                <small>宠物日常体重记录</small>
-              </button>
-            )}
+            <button className="daily-choice" onClick={() => onChoose('weight')}>
+              <span>体重</span>
+              <small>日常体重记录</small>
+            </button>
           </div>
         )}
         {editor.type === 'reminder' && <ReminderForm item={editor.item} saving={saving} onSubmit={onSaveReminder} onCancel={onClose} />}
+        {editor.type === 'visit' && <VisitForm item={editor.item} saving={saving} onSubmit={onSaveVisit} onCancel={onClose} />}
+        {editor.type === 'lab' && <LabForm item={editor.item} visits={visits} saving={saving} onSubmit={onSaveLab} onCancel={onClose} />}
         {editor.type === 'care' && <CareLogForm item={editor.item} saving={saving} onSubmit={onSaveCareLog} onCancel={onClose} />}
         {editor.type === 'med' && <MedForm item={editor.item} saving={saving} onSubmit={onSaveMed} onCancel={onClose} />}
         {editor.type === 'weight' && <WeightForm saving={saving} onSubmit={onSaveWeight} onCancel={onClose} />}
       </div>
     </div>
+  );
+};
+
+const VisitForm = ({ item, saving, onSubmit, onCancel }) => {
+  const [form, setForm] = React.useState({
+    date: item?.date || todayIso(),
+    type: item?.type || '就医',
+    hospital: item?.hospital || '',
+    department: item?.department || '',
+    doctor: item?.doctor || '',
+    chief_complaint: item?.chief_complaint || '',
+    severity: item?.severity || '',
+    diagnosis_text: Array.isArray(item?.diagnosis) ? item.diagnosis.join('\n') : '',
+    notes: item?.notes || '',
+    note_full: item?.note_full || '',
+  });
+  const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  return (
+    <form className="daily-form" onSubmit={(e) => { e.preventDefault(); onSubmit(form, item); }}>
+      <div className="mono span-2" style={{ color: 'var(--ink-soft)', marginBottom: -2 }}>日期默认今天，请按实际就诊/体检日期修改。</div>
+      <label>日期 *<input required type="date" value={form.date} onChange={e => set('date', e.target.value)} /></label>
+      <label>类型<select value={form.type} onChange={e => set('type', e.target.value)}>
+        <option value="就医">就医</option>
+        <option value="体检">体检</option>
+        <option value="其他">其他</option>
+      </select></label>
+      <label>医院/机构<input value={form.hospital} onChange={e => set('hospital', e.target.value)} placeholder="例如：社区医院" /></label>
+      <label>科室<input value={form.department} onChange={e => set('department', e.target.value)} placeholder="例如：内科" /></label>
+      <label>医生<input value={form.doctor} onChange={e => set('doctor', e.target.value)} /></label>
+      <label>严重程度<select value={form.severity} onChange={e => set('severity', e.target.value)}>
+        <option value="">未标记</option>
+        <option value="轻微">轻微</option>
+        <option value="一般">一般</option>
+        <option value="严重">严重</option>
+      </select></label>
+      <label className="span-2">主诉/原因<input value={form.chief_complaint} onChange={e => set('chief_complaint', e.target.value)} placeholder="例如：年度体检、咳嗽复诊" /></label>
+      <label className="span-2">诊断/结论（每行或逗号分隔）<textarea value={form.diagnosis_text} onChange={e => set('diagnosis_text', e.target.value)} rows="3" /></label>
+      <label className="span-2">备注<textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows="3" /></label>
+      <label className="span-2">完整记录<textarea value={form.note_full} onChange={e => set('note_full', e.target.value)} rows="5" placeholder="可粘贴门诊小结或人工整理后的完整内容" /></label>
+      <div className="form-actions">
+        <Btn ghost onClick={onCancel}>取消</Btn>
+        <Btn primary type="submit">{saving ? '保存中...' : '保存'}</Btn>
+      </div>
+    </form>
+  );
+};
+
+const LabForm = ({ item, visits = [], saving, onSubmit, onCancel }) => {
+  const latestVisit = visits[0] || null;
+  const [form, setForm] = React.useState({
+    date: item?.date || latestVisit?.date || todayIso(),
+    panel: item?.panel || '',
+    test_name: item?.test_name || '',
+    value: item?.value || '',
+    unit: item?.unit || '',
+    ref_low: item?.ref_low || '',
+    ref_high: item?.ref_high || '',
+    status: item?.status || '',
+    visit_id: item ? (item.visit_id ? String(item.visit_id) : '') : latestVisit?.id ? String(latestVisit.id) : '',
+    source_file: item?.source_file || '',
+  });
+  const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  const setVisit = (value) => {
+    const visit = visits.find(v => String(v.id) === value);
+    setForm(prev => ({ ...prev, visit_id: value, date: visit?.date || prev.date }));
+  };
+  return (
+    <form className="daily-form" onSubmit={(e) => { e.preventDefault(); onSubmit(form, item); }}>
+      <div className="mono span-2" style={{ color: 'var(--ink-soft)', marginBottom: -2 }}>日期默认取最近就诊日期；没有就诊时默认今天，均可修改。</div>
+      <label>日期 *<input required type="date" value={form.date} onChange={e => set('date', e.target.value)} /></label>
+      <label>关联就诊<select value={form.visit_id} onChange={e => setVisit(e.target.value)}>
+        <option value="">不关联</option>
+        {visits.map(v => <option key={v.id} value={v.id}>{v.date} · {v.type || '就诊'} · {v.hospital || v.chief_complaint || `#${v.id}`}</option>)}
+      </select></label>
+      <label>检查项目 *<input required value={form.panel} onChange={e => set('panel', e.target.value)} placeholder="例如：血常规" /></label>
+      <label>指标名称 *<input required value={form.test_name} onChange={e => set('test_name', e.target.value)} placeholder="例如：血红蛋白" /></label>
+      <label>数值<input value={form.value} onChange={e => set('value', e.target.value)} /></label>
+      <label>单位<input value={form.unit} onChange={e => set('unit', e.target.value)} placeholder="例如：g/L" /></label>
+      <label>参考下限<input value={form.ref_low} onChange={e => set('ref_low', e.target.value)} /></label>
+      <label>参考上限<input value={form.ref_high} onChange={e => set('ref_high', e.target.value)} /></label>
+      <label>状态<select value={form.status} onChange={e => set('status', e.target.value)}>
+        <option value="">未标记</option>
+        <option value="normal">正常</option>
+        <option value="high">偏高</option>
+        <option value="low">偏低</option>
+        <option value="abnormal">异常</option>
+      </select></label>
+      <label>来源文件<input value={form.source_file} onChange={e => set('source_file', e.target.value)} placeholder="可选" /></label>
+      <div className="form-actions">
+        <Btn ghost onClick={onCancel}>取消</Btn>
+        <Btn primary type="submit">{saving ? '保存中...' : '保存'}</Btn>
+      </div>
+    </form>
   );
 };
 
@@ -1451,7 +1744,7 @@ const MiniTrend = ({ memberKey, testName }) => {
 };
 
 /* ── Checkup Tab ─────────────────────────────────────────────── */
-const CheckupLabRow = ({ item, memberKey, autoExpanded }) => {
+const CheckupLabRow = ({ item, memberKey, autoExpanded, onEdit, onDelete }) => {
   const direction = labDirection(item);
   const abnormal = ['high', 'low', 'abnormal'].includes(direction);
   const [expanded, setExpanded] = React.useState(autoExpanded);
@@ -1469,6 +1762,8 @@ const CheckupLabRow = ({ item, memberKey, autoExpanded }) => {
         </div>
         <div className="mono ck-lab-unit">{item.u}</div>
         <div className="mono ck-lab-ref">{item.ref}</div>
+        {onEdit && item.raw && <Btn ghost onClick={(e) => { e.stopPropagation(); onEdit(item.raw); }}>编辑</Btn>}
+        {onDelete && item.raw && <Btn ghost onClick={(e) => { e.stopPropagation(); onDelete(item.raw); }}>删除</Btn>}
         <div className="mono ck-lab-chevron">{expanded ? '▲' : '▼'}</div>
       </div>
       {expanded && (
@@ -1480,7 +1775,7 @@ const CheckupLabRow = ({ item, memberKey, autoExpanded }) => {
   );
 };
 
-const TabCheckup = ({ data, memberKey, reports, onOpen }) => {
+const TabCheckup = ({ data, memberKey, reports, onOpen, onAddLab, onEditLab, onDeleteLab, onEditVisit }) => {
   const checkupReports = React.useMemo(() => (
     reports.slice().sort((a, b) => b.d.localeCompare(a.d))
   ), [reports]);
@@ -1508,6 +1803,7 @@ const TabCheckup = ({ data, memberKey, reports, onOpen }) => {
         ref: displayRef(lab.ref_low, lab.ref_high),
         status: lab.status,
         panel: lab.panel,
+        raw: lab,
       }));
   }, [extra.sections, selected?.visitId, data.labs]);
 
@@ -1515,11 +1811,23 @@ const TabCheckup = ({ data, memberKey, reports, onOpen }) => {
   const normalItems = labItems.filter(item => !['high', 'low', 'abnormal'].includes(labDirection(item)));
 
   if (checkupReports.length === 0) {
-    return <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>暂无体检报告记录</div>;
+    return (
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <DashLabel right="可手动补录单项指标">体检 / 化验</DashLabel>
+          <Btn primary onClick={onAddLab}>+ 新增化验</Btn>
+        </div>
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>暂无体检报告记录</div>
+      </div>
+    );
   }
 
   return (
     <div className="checkup-tab">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
+        <DashLabel right="可手动补录单项指标">体检 / 化验</DashLabel>
+        <Btn primary onClick={onAddLab}>+ 新增化验</Btn>
+      </div>
       <div className="checkup-selector">
         {checkupReports.map(r => (
           <button
@@ -1544,6 +1852,7 @@ const TabCheckup = ({ data, memberKey, reports, onOpen }) => {
             {extra.conclusion && (
               <span className="mono checkup-summary-bar__note">{extra.conclusion.slice(0, 60)}{extra.conclusion.length > 60 ? '…' : ''}</span>
             )}
+            {selected.visitId && onEditVisit && <Btn ghost onClick={() => onEditVisit(selected.visitId)}>编辑就诊</Btn>}
             <Btn ghost onClick={() => onOpen && onOpen(selected)}>完整报告 →</Btn>
           </div>
 
@@ -1554,7 +1863,7 @@ const TabCheckup = ({ data, memberKey, reports, onOpen }) => {
                 <div className="mono" style={{ color: 'var(--ink-soft)' }}>{abnormalItems.length} 项 · 点击行可折叠趋势</div>
               </div>
               {abnormalItems.map((item, i) => (
-                <CheckupLabRow key={`${item.k}-${i}`} item={item} memberKey={memberKey} autoExpanded={false} />
+                <CheckupLabRow key={`${item.k}-${i}`} item={item} memberKey={memberKey} autoExpanded={false} onEdit={onEditLab} onDelete={onDeleteLab} />
               ))}
             </div>
           )}
@@ -1566,7 +1875,7 @@ const TabCheckup = ({ data, memberKey, reports, onOpen }) => {
                 <div className="mono">{normalItems.length} 项&nbsp;&nbsp;{showNormal ? '▲ 收起' : '▼ 展开'}</div>
               </button>
               {showNormal && normalItems.map((item, i) => (
-                <CheckupLabRow key={`${item.k}-${i}`} item={item} memberKey={memberKey} autoExpanded={false} />
+                <CheckupLabRow key={`${item.k}-${i}`} item={item} memberKey={memberKey} autoExpanded={false} onEdit={onEditLab} onDelete={onDeleteLab} />
               ))}
             </div>
           )}
@@ -1576,9 +1885,12 @@ const TabCheckup = ({ data, memberKey, reports, onOpen }) => {
   );
 };
 
-const TabReports = ({ reports, kind, onOpen }) => (
+const TabReports = ({ reports, kind, onOpen, onAdd, onEdit, onDelete }) => (
   <div>
-    <DashLabel right={`${reports.length} 条`}>全部{kind}记录</DashLabel>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      <DashLabel right={`${reports.length} 条`}>全部{kind}记录</DashLabel>
+      <Btn primary onClick={onAdd}>+ 新增就诊</Btn>
+    </div>
     {reports.length === 0 ? (
       <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>暂无 {kind} 记录</div>
     ) : (
@@ -1595,7 +1907,11 @@ const TabReports = ({ reports, kind, onOpen }) => (
                 <Chip key={j} variant={severityBadgeVariant(r.severity)}>{a}</Chip>
               ))}
             </div>
-            <Btn ghost onClick={() => onOpen && onOpen(r)}>打开 →</Btn>
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {onEdit && <Btn ghost onClick={() => onEdit(r)}>编辑</Btn>}
+              {onDelete && <Btn ghost onClick={() => onDelete(r)}>删除</Btn>}
+              <Btn ghost onClick={() => onOpen && onOpen(r)}>打开 →</Btn>
+            </div>
           </div>
         ))}
       </div>
@@ -1885,23 +2201,42 @@ const TabMeds = ({ meds, visits = [], onAdd, onEdit, onStop, onDelete }) => {
   );
 };
 
-const TabAttachments = ({ reports, onOpen }) => (
-  <div>
-    <DashLabel right={`${reports.length} 份文件`}>附件库</DashLabel>
-    <div className="mono" style={{ color: 'var(--ink-soft)', fontSize: 11, margin: '-2px 0 10px' }}>
-      医疗报告与附件由 Agent 管线归档入库；前端暂不提供上传解析入口。
-    </div>
-    <div className="attachment-grid">
-      {reports.map(r => (
-        <div key={r.id} className="attachment-card" onClick={() => onOpen && onOpen(r)}>
-          <Placeholder label={r.file} h={90} tooltip={reportTooltip(r)} />
-          <div className="attachment-card__title">{r.t}</div>
-          <div className="attachment-card__date mono">{r.d}</div>
+const TabAttachments = ({ reports, onOpen, onAddAttachment, onImport, onEditAttachment, onDeleteAttachment }) => {
+  const stopCardAction = (event, action) => {
+    event.stopPropagation();
+    action();
+  };
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <DashLabel right={`${reports.length} 份文件`}>附件库</DashLabel>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          {onAddAttachment && <Btn onClick={onAddAttachment}>+ 添加附件</Btn>}
+          {onImport && <Btn primary onClick={onImport}>+ 上传报告/附件</Btn>}
         </div>
-      ))}
+      </div>
+      <div className="mono" style={{ color: 'var(--ink-soft)', fontSize: 11, margin: '-2px 0 10px' }}>
+“添加附件”只归档文件并新增附件记录；“上传报告/附件”会进入报告解析和结构化写入流程。移除记录默认保留磁盘文件，只有“删除记录+文件”会尝试删除当前数据目录内的原始归档文件。
+      </div>
+      <div className="attachment-grid">
+        {reports.map(r => (
+          <div key={r.id} className="attachment-card" onClick={() => onOpen && onOpen(r)}>
+            <Placeholder label={r.file} h={90} tooltip={reportTooltip(r)} />
+            <div className="attachment-card__title">{r.t}</div>
+            <div className="attachment-card__date mono">{r.d}</div>
+            {onDeleteAttachment && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                {onEditAttachment && <Btn ghost onClick={(event) => stopCardAction(event, () => onEditAttachment(r))}>编辑</Btn>}
+                <Btn ghost onClick={(event) => stopCardAction(event, () => onDeleteAttachment(r, false))}>移除记录</Btn>
+                <Btn ghost onClick={(event) => stopCardAction(event, () => onDeleteAttachment(r, true))}>删除记录+文件</Btn>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 const TabReminders = ({ items, onAdd, onEdit, onDone, onSkip, onDelete }) => (
   <div>
@@ -2223,12 +2558,15 @@ const TabPetCare = ({ reminders, attachments, onAdd, onEdit, onDelete }) => {
   );
 };
 
-const TabVax = ({ labs, attachments }) => {
+const TabVax = ({ labs, attachments, onAddLab }) => {
   const antibodyLabs = labs.filter(l => l.panel === '疫苗抗体');
   const vaccineFiles = attachments.filter(a => a.tag === '疫苗' || a.title.includes('免疫'));
   return (
     <div>
-      <DashLabel right={`${antibodyLabs.length} 项`}>疫苗与抗体</DashLabel>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <DashLabel right={`${antibodyLabs.length} 项`}>疫苗与抗体</DashLabel>
+        <Btn primary onClick={onAddLab}>+ 新增化验</Btn>
+      </div>
       <div className="row-list">
         {antibodyLabs.map(l => (
           <div key={l.id} className="row" style={{ gridTemplateColumns: '110px 1fr 180px' }}>
@@ -2249,7 +2587,7 @@ const TabPetWeight = ({ member, weights, onAdd, onDelete }) => {
   const chartPoints = weights.map(w => ({ ...w, value: w.weight_kg, notes: weightPointNote(member, w) }));
   const latest = weights[weights.length - 1];
   const prev = weights.length >= 2 ? weights[weights.length - 2] : null;
-  const delta = latest && prev ? latest.weight_kg - prev.weight_kg : 0;
+  const delta = latest && prev ? latest.weight_kg - prev.weight_kg : null;
   const selectedWeight = weights.find(w => String(w.id) === String(selectedWeightId));
   React.useEffect(() => {
     if (selectedWeightId && !weights.some(w => String(w.id) === String(selectedWeightId))) {
@@ -2266,7 +2604,7 @@ const TabPetWeight = ({ member, weights, onAdd, onDelete }) => {
         <div className="pet-weight-summary" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
           <div>
             <div style={{ fontFamily: 'Caveat, cursive', fontSize: 44, fontWeight: 700, lineHeight: 1 }}>{latest ? formatWeight(latest.weight_kg) : '—'} kg</div>
-            <span className="mono" style={{ color: delta > 0 ? 'var(--danger)' : 'var(--ok)' }}>{delta > 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(2)} kg · 较上次</span>
+            {delta !== null && <span className="mono" style={{ color: delta > 0 ? 'var(--danger)' : 'var(--ok)' }}>{delta > 0 ? '↑' : '↓'} {Math.abs(delta).toFixed(2)} kg · 较上次</span>}
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <Chip variant="accent-2">{member.name}</Chip>

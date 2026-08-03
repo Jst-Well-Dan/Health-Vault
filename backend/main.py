@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from database import DB_PATH, is_mock_mode, init_db
 from mock_data import seed_mock_data
-from routers import activity, attachments, labs, meds, members, reminders, visits, weight
+from routers import activity, agent, attachments, backups, imports, labs, meds, members, reminders, visits, weight
 
 
 app = FastAPI(title="家庭健康档案 API", version="1.0.0")
@@ -19,8 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-FRONTEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
-PUBLIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "public"))
+FRONTEND_DIR = os.path.abspath(os.getenv("HEALTH_FRONTEND_DIR", os.path.join(os.path.dirname(__file__), "..", "frontend")))
+PUBLIC_DIR = os.path.abspath(os.getenv("HEALTH_PUBLIC_DIR", os.path.join(os.path.dirname(__file__), "..", "data", "public")))
 
 
 @app.on_event("startup")
@@ -38,6 +38,9 @@ app.include_router(meds.router, prefix="/api")
 app.include_router(weight.router, prefix="/api")
 app.include_router(reminders.router, prefix="/api")
 app.include_router(attachments.router, prefix="/api")
+app.include_router(backups.router, prefix="/api")
+app.include_router(imports.router, prefix="/api")
+app.include_router(agent.router, prefix="/api")
 
 
 @app.get("/api/meta")

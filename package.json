@@ -1,0 +1,39 @@
+{
+  "name": "health-vault-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "compile": "tsc",
+    "test": "python -m unittest discover -s tests -v && npm run check",
+    "smoke": "npm run compile && node tests/electron-smoke.mjs",
+    "start": "npm run compile && electron .",
+    "build:backend": ".build-venv\\Scripts\\python.exe -m PyInstaller health-vault-backend.spec --noconfirm",
+    "build": "npm run compile && npm run build:backend && electron-builder"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.83.0",
+    "@earendil-works/pi-ai": "0.83.0",
+    "typebox": "1.3.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "typescript": "^5.9.0"
+  },
+  "build": {
+    "appId": "com.healthvault.desktop",
+    "productName": "家庭健康档案",
+    "files": ["dist-electron/**/*", "package.json"],
+    "extraResources": [
+      { "from": "dist/health-vault-backend.exe", "to": "backend/health-vault-backend.exe" },
+      { "from": "frontend", "to": "frontend" },
+      { "from": "data/public", "to": "public" }
+    ],
+    "win": { "target": "nsis" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  }
+}

@@ -138,6 +138,25 @@ http://127.0.0.1:8000/
 http://<电脑的 Tailscale IP>:8000/
 ```
 
+## Electron 桌面版
+
+开发运行（需要 Node.js 22.19+ 和 Python）：
+
+```powershell
+npm install
+npm start
+```
+
+构建 Windows 安装包：
+
+```powershell
+python -m venv .build-venv
+.\.build-venv\Scripts\python.exe -m pip install -r backend\requirements-build.txt
+npm run build
+```
+
+桌面版会自动启动只监听 `127.0.0.1` 的 Python sidecar。安装后的数据库保存在 Electron 用户数据目录，不写入安装目录；模型凭据使用 Electron 系统加密存储。健康助手的所有写操作都会先展示字段对比并等待确认，输入 `/undo` 可撤销最近一次 agent 改动。
+
 ## 数据目录
 
 ```text

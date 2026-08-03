@@ -63,8 +63,15 @@
       return jsonResponse({ mock_mode: true, static_preview: true, db_path: 'data/mock/health_mock.db' });
     }
 
+    if (path === '/api/backups/info') {
+      return jsonResponse({ database_path: 'data/mock/health_mock.db', backup_dir: 'data/mock/backups', exists: false, backups: [] });
+    }
+
     if (path === '/api/members') {
-      return jsonResponse(data.members);
+      const members = params.get('include_archived') === 'true'
+        ? data.members
+        : data.members.filter((row) => !row.archived_at);
+      return jsonResponse(members);
     }
 
     if (path.startsWith('/api/members/')) {

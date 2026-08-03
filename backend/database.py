@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(os.getenv("HEALTH_VAULT_HOME", Path(__file__).resolve().parent.parent)).resolve()
 LOG_DIR = BASE_DIR / "data" / "log"
 
 WRITE_SQL_RE = re.compile(r"^\s*(INSERT|UPDATE|DELETE|REPLACE)\b", re.IGNORECASE)
@@ -74,10 +74,13 @@ class LoggedConnection(sqlite3.Connection):
         return cursor
 
     def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> bool:
-        result = super().__exit__(exc_type, exc_value, traceback)
-        if exc_type is None:
-            self._log_committed_writes()
-        return result
+        try:
+            result = super().__exit__(exc_type, exc_value, traceback)
+            if exc_type is None:
+                self._log_committed_writes()
+            return result
+        finally:
+            self.close()
 
     def _track_write(self, sql: str, cursor: sqlite3.Cursor) -> None:
         if not self._log_writes:
@@ -147,6 +150,7 @@ def init_db() -> None:
               allergies   TEXT DEFAULT '[]',
               chronic     TEXT DEFAULT '[]',
               notes       TEXT,
+              archived_at TEXT,
               created_at  TEXT DEFAULT (datetime('now','localtime')),
               updated_at  TEXT DEFAULT (datetime('now','localtime'))
             );
@@ -239,6 +243,26 @@ def init_db() -> None:
               created_at  TEXT DEFAULT (datetime('now','localtime'))
             );
 
+            CREATE TABLE IF NOT EXISTS agent_change_log (
+              id          INTEGER PRIMARY KEY AUTOINCREMENT,
+              tool        TEXT NOT NULL,
+              table_name  TEXT NOT NULL,
+              row_id      TEXT NOT NULL,
+              action      TEXT NOT NULL CHECK (action IN ('create', 'update', 'delete')),
+              before_json TEXT,
+              after_json  TEXT,
+              undone_at   TEXT,
+              created_at  TEXT DEFAULT (datetime('now','localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS agent_messages (
+              id          INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_id  TEXT NOT NULL DEFAULT 'default',
+              role        TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+              content     TEXT NOT NULL,
+              created_at  TEXT DEFAULT (datetime('now','localtime'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_visits_member       ON visits(member_key, date);
             CREATE INDEX IF NOT EXISTS idx_labs_member         ON lab_results(member_key, test_name, date);
             CREATE INDEX IF NOT EXISTS idx_labs_panel          ON lab_results(member_key, panel);
@@ -246,6 +270,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_weight_member       ON weight_log(member_key, date);
             CREATE INDEX IF NOT EXISTS idx_reminders_member    ON reminders(member_key, date);
             CREATE INDEX IF NOT EXISTS idx_attachments_member  ON attachments(member_key, date);
+            CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages(session_id, id);
             """
         )
         existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(meds)").fetchall()}
@@ -285,6 +310,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE members ADD COLUMN home_date TEXT")
         if "sort_order" not in member_cols:
             conn.execute("ALTER TABLE members ADD COLUMN sort_order INTEGER")
+        if "archived_at" not in member_cols:
+            conn.execute("ALTER TABLE members ADD COLUMN archived_at TEXT")
         max_sort_order = conn.execute(
             "SELECT COALESCE(MAX(sort_order), 0) AS value FROM members WHERE sort_order IS NOT NULL AND sort_order > 0"
         ).fetchone()["value"]

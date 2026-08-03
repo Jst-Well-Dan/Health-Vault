@@ -25,13 +25,13 @@ class MemberBase(BaseModel):
 
 
 class MemberCreate(MemberBase):
-    key: str
+    key: Optional[str] = None
     name: str
     species: str = "human"
 
 
 class MemberUpdate(MemberBase):
-    pass
+    archived_at: Optional[str] = None
 
 
 class MemberOut(BaseModel):
@@ -54,6 +54,7 @@ class MemberOut(BaseModel):
     allergies: list[str] = Field(default_factory=list)
     chronic: list[str] = Field(default_factory=list)
     notes: Optional[str] = None
+    archived_at: Optional[str] = None
     latest_kpis: list[dict[str, Any]] = Field(default_factory=list)
     next_reminder: Optional[dict[str, Any]] = None
 
@@ -77,6 +78,20 @@ class VisitOut(VisitCreate):
     id: int
 
 
+class VisitUpdate(BaseModel):
+    date: Optional[str] = None
+    type: Optional[str] = None
+    hospital: Optional[str] = None
+    department: Optional[str] = None
+    doctor: Optional[str] = None
+    chief_complaint: Optional[str] = None
+    severity: Optional[Severity] = None
+    diagnosis: Optional[list[str]] = None
+    notes: Optional[str] = None
+    note_full: Optional[str] = None
+    source_file: Optional[str] = None
+
+
 class LabCreate(BaseModel):
     panel: str
     test_name: str
@@ -93,6 +108,25 @@ class LabOut(LabCreate):
     member_key: str
     visit_id: Optional[int] = None
     date: str
+
+
+class LabRecordCreate(LabCreate):
+    member_key: str
+    visit_id: Optional[int] = None
+    date: str
+
+
+class LabUpdate(BaseModel):
+    visit_id: Optional[int] = None
+    date: Optional[str] = None
+    panel: Optional[str] = None
+    test_name: Optional[str] = None
+    value: Optional[str] = None
+    unit: Optional[str] = None
+    ref_low: Optional[str] = None
+    ref_high: Optional[str] = None
+    status: Optional[str] = None
+    source_file: Optional[str] = None
 
 
 class MedCreate(BaseModel):
@@ -179,3 +213,20 @@ class AttachmentOut(AttachmentCreate):
     member_key: str
     visit_id: Optional[int] = None
     date: str
+
+
+class AttachmentRecordCreate(AttachmentCreate):
+    member_key: str
+    visit_id: Optional[int] = None
+    date: str
+
+
+class AttachmentUpdate(BaseModel):
+    visit_id: Optional[int] = None
+    date: Optional[str] = None
+    title: Optional[str] = None
+    org: Optional[str] = None
+    tag: Optional[str] = None
+    filename: Optional[str] = None
+    file_path: Optional[str] = None
+    notes: Optional[str] = None

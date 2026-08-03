@@ -13,25 +13,25 @@
     rel="stylesheet">
   <link rel="stylesheet" href="style.css?v=20260426-mobile-modal">
 
-  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"
-    integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L"
-    crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"
-    integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm"
-    crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"
-    integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y"
-    crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Runtime dependencies are vendored for offline desktop use. Keep this order: React/Babel/libs before JSX. -->
+  <script src="vendor/react.development.js"></script>
+  <script src="vendor/react-dom.development.js"></script>
+  <script src="vendor/babel.min.js"></script>
+  <script src="vendor/echarts.min.js"></script>
+  <script src="vendor/marked.min.js"></script>
 </head>
 
 <body>
   <div id="root"></div>
 
   <script type="text/babel" src="components/primitives.jsx?v=20260426-mobile-modal"></script>
-  <script type="text/babel" src="components/screen_family.jsx?v=20260426-mobile-modal"></script>
-  <script type="text/babel" src="components/screen_member.jsx?v=20260426-mobile-modal"></script>
+  <script type="text/babel" src="components/member_editor.jsx?v=20260803-member-management"></script>
+  <script type="text/babel" src="components/backup_panel.jsx?v=20260803-backups"></script>
+  <script type="text/babel" src="components/screen_family.jsx?v=20260803-member-management"></script>
+  <script type="text/babel" src="components/report_import.jsx?v=20260803-report-import"></script>
+  <script type="text/babel" src="components/attachment_upload.jsx?v=20260803-attachment-upload"></script>
+  <script type="text/babel" src="components/screen_member.jsx?v=20260803-attachment-upload"></script>
+  <script type="text/babel" src="components/agent_panel.jsx?v=20260803-electron-agent"></script>
 
   <script type="text/babel" data-presets="react">
 
@@ -58,8 +58,11 @@
       const [palette, setPalette] = React.useState(TWEAK_DEFAULTS.palette);
       const [tweaksOpen, setTweaksOpen] = React.useState(false);
       const [members, setMembers] = React.useState([]);
+      const [archivedMembers, setArchivedMembers] = React.useState([]);
       const [loading, setLoading] = React.useState(true);
       const [error, setError] = React.useState('');
+      const [memberEditor, setMemberEditor] = React.useState(null);
+      const [backupOpen, setBackupOpen] = React.useState(false);
       const [meta, setMeta] = React.useState({ mock_mode: false });
 
       React.useEffect(() => {
@@ -74,10 +77,15 @@
         setError('');
         setLoading(true);
         try {
-          const membersData = await apiGet('/api/members');
-          setMembers(membersData);
-          if (membersData.length && !membersData.some(m => m.key === memberKey)) {
-            setMemberKey(membersData[0].key);
+          const allMembersData = await apiGet('/api/members?include_archived=true');
+          const activeMembers = allMembersData.filter(m => !m.archived_at);
+          setMembers(activeMembers);
+          setArchivedMembers(allMembersData.filter(m => m.archived_at));
+          if (activeMembers.length === 0) {
+            setMemberKey('');
+            setScreen('family');
+          } else if (!activeMembers.some(m => m.key === memberKey)) {
+            setMemberKey(activeMembers[0].key);
           }
         } catch (err) {
           setError(err.message || 'API 加载失败');
@@ -113,6 +121,18 @@
         setScreen('member');
       };
 
+      const openCreateMember = (kind) => setMemberEditor({ mode: 'create', kind });
+      const openEditMember = (member) => setMemberEditor({ mode: 'edit', member });
+      const handleMemberSaved = async (saved) => {
+        await loadShellData();
+        if (saved?.key && !saved.archived_at) {
+          setMemberKey(saved.key);
+          setScreen('member');
+        } else if (saved?.key === memberKey) {
+          setScreen('family');
+        }
+      };
+
       return (
         <div className="app">
           <div className="mast">
@@ -122,6 +142,7 @@
             </div>
             <div className="meta">
               {meta.mock_mode && <span className="mode-badge">模拟模式</span>}
+              <Btn ghost onClick={() => setBackupOpen(true)}>数据备份</Btn>
             </div>
           </div>
 
@@ -148,8 +169,11 @@
             {screen === 'family' && (
               <ScreenFamily
                 members={members}
+                archivedMembers={archivedMembers}
                 loading={loading}
                 onOpenMember={openMember}
+                onCreateMember={openCreateMember}
+                onEditMember={openEditMember}
               />
             )}
             {screen === 'member' && (
@@ -158,6 +182,8 @@
                 memberKey={memberKey}
                 onChangeMember={openMember}
                 onDataChanged={loadShellData}
+                onCreateMember={openCreateMember}
+                onEditMember={openEditMember}
               />
             )}
           </div>
@@ -185,6 +211,15 @@
               </div>
             </div>
           </div>
+          {backupOpen && <BackupPanel onClose={() => setBackupOpen(false)} />}
+          {memberEditor && <MemberEditorModal
+            mode={memberEditor.mode}
+            kind={memberEditor.kind}
+            member={memberEditor.member}
+            onClose={() => setMemberEditor(null)}
+            onSaved={handleMemberSaved}
+          />}
+          {window.healthAgent && <AgentPanel onDataChanged={loadShellData} />}
         </div>
       );
     }

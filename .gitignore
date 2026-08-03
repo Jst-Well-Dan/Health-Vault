@@ -9,6 +9,7 @@ ENV/
 env.bak/
 venv.bak/
 .venv/
+.build-venv/
 
 # SQLite
 data/*.db
@@ -23,14 +24,18 @@ data/log/
 # Frontend
 node_modules/
 dist/
+dist-electron/
+build/
 
-# IDEs
+# IDEs and local agent artifacts
 .vscode/
 .idea/
 .DS_Store
+.pi-subagents/
 
 # Docs
 docs/*
+!docs/electron-agent-development-guide.md
 !docs/static-preview/
 !docs/static-preview/**
 todo.md

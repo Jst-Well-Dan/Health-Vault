@@ -73,7 +73,7 @@ def _write_index() -> None:
     html = html.replace('src="components/primitives.jsx?v=20260420-avatar"', f'src="components/primitives.jsx?v={STATIC_ASSET_VERSION}"')
     html = html.replace('src="components/screen_family.jsx?v=20260420-avatar"', f'src="components/screen_family.jsx?v={STATIC_ASSET_VERSION}"')
     html = html.replace('src="components/screen_member.jsx?v=20260420-avatar"', f'src="components/screen_member.jsx?v={STATIC_ASSET_VERSION}"')
-    marker = '<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>'
+    marker = '<script src="vendor/marked.min.js"></script>'
     html = html.replace(marker, marker + '\n<script src="static-api.js"></script>')
     (OUT_DIR / "index.html").write_text(html, encoding="utf-8")
 
@@ -125,6 +125,7 @@ def build_static_data() -> dict:
 def main() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     _copytree(FRONTEND_DIR / "components", OUT_DIR / "components")
+    _copytree(FRONTEND_DIR / "vendor", OUT_DIR / "vendor")
     _copy_public_assets(OUT_DIR / "public")
     shutil.copy2(FRONTEND_DIR / "style.css", OUT_DIR / "style.css")
     shutil.copy2(FRONTEND_DIR / "static-api.js", OUT_DIR / "static-api.js")
