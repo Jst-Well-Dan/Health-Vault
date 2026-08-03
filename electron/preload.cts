@@ -21,6 +21,13 @@ contextBridge.exposeInMainWorld("healthAttachment", {
   upload: (metadata: unknown) => ipcRenderer.invoke("attachment:upload", metadata),
 });
 
+contextBridge.exposeInMainWorld("healthDeploy", {
+  status: () => ipcRenderer.invoke("deploy:status"),
+  setBackground: (enabled: boolean) => ipcRenderer.invoke("deploy:set-background", enabled),
+  setAutostart: (enabled: boolean) => ipcRenderer.invoke("deploy:set-autostart", enabled),
+  checkTailscale: () => ipcRenderer.invoke("deploy:check-tailscale"),
+});
+
 contextBridge.exposeInMainWorld("healthAgent", {
   send: (message: string) => ipcRenderer.invoke("agent:send", message),
   stop: () => ipcRenderer.invoke("agent:stop"),

@@ -9,4 +9,9 @@ if __name__ == "__main__":
         sys.stdout = open(os.devnull, "w")
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w")
-    uvicorn.run("main:app", host="127.0.0.1", port=int(os.getenv("HEALTH_PORT", "8000")), log_level="warning")
+    uvicorn.run(
+        "main:app",
+        host=os.getenv("HEALTH_HOST", "127.0.0.1"),
+        port=int(os.getenv("HEALTH_PORT", "8000")),
+        log_level="warning",
+    )

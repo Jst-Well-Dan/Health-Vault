@@ -1,10 +1,16 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, readFile, rename, stat, unlink } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { basename, dirname, join, resolve } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, shell, Tray } from "electron";
 import { HealthAgent } from "./agent.js";
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", () => { void showOrCreateWindow(); });
+}
 
 let window: BrowserWindow | null = null;
 let backend: ChildProcess | null = null;
@@ -12,6 +18,8 @@ let healthAgent: HealthAgent | null = null;
 let backendUrl: string | null = null;
 let quitting = false;
 let stoppingBackendExpected = false;
+let tray: Tray | null = null;
+let deploySettings = { backgroundEnabled: false };
 const selectedAttachmentFiles = new Map<string, string>();
 const ATTACHMENT_EXTENSIONS = ["pdf", "png", "jpg", "jpeg", "webp", "bmp", "gif", "txt", "md", "csv", "json", "doc", "docx", "xls", "xlsx"];
 const wait = (ms: number) => new Promise((resolveWait) => setTimeout(resolveWait, ms));
@@ -21,6 +29,27 @@ function dataHome() { return app.isPackaged ? app.getPath("userData") : appRoot(
 function agentCredentialPath() { return join(app.getPath("userData"), "agent-credentials.bin"); }
 function agentSettingsPath() { return join(app.getPath("userData"), "agent-settings.json"); }
 function activeDatabasePath() { return resolve(process.env.HEALTH_DB_PATH || join(dataHome(), "data", "health.db")); }
+function deploySettingsPath() { return join(app.getPath("userData"), "deploy-settings.json"); }
+
+async function loadDeploySettings() {
+  try { deploySettings = { ...deploySettings, ...JSON.parse(await readFile(deploySettingsPath(), "utf8")) }; } catch {}
+}
+
+async function saveDeploySettings() {
+  await writeFile(deploySettingsPath(), JSON.stringify(deploySettings, null, 2), "utf8");
+}
+
+function getTailscaleIp(): Promise<string | null> {
+  return new Promise((resolveIp) => {
+    let proc: ChildProcess;
+    try { proc = spawn("tailscale", ["ip", "-4"], { windowsHide: true }); }
+    catch { resolveIp(null); return; }
+    let out = "";
+    proc.stdout?.on("data", (chunk) => { out += String(chunk); });
+    proc.once("error", () => resolveIp(null));
+    proc.once("exit", (code) => resolveIp(code === 0 && out.trim() ? out.trim().split(/\s+/)[0] : null));
+  });
+}
 
 async function freePort(): Promise<number> {
   return new Promise((resolvePort, reject) => {
@@ -34,7 +63,7 @@ async function freePort(): Promise<number> {
   });
 }
 
-async function startBackend(): Promise<string> {
+async function startBackend(host: string): Promise<string> {
   const port = await freePort();
   const root = appRoot();
   const executable = app.isPackaged
@@ -47,6 +76,7 @@ async function startBackend(): Promise<string> {
     stdio: app.isPackaged ? "ignore" : "inherit",
     env: {
       ...process.env,
+      HEALTH_HOST: host,
       HEALTH_PORT: String(port),
       HEALTH_VAULT_HOME: dataHome(),
       HEALTH_FRONTEND_DIR: app.isPackaged ? join(process.resourcesPath, "frontend") : join(root, "frontend"),
@@ -70,9 +100,14 @@ async function initHealthAgent(baseUrl: string) {
   await healthAgent.init();
 }
 
+function currentHost() { return deploySettings.backgroundEnabled ? "0.0.0.0" : "127.0.0.1"; }
+
 async function createWindow() {
-  const baseUrl = await startBackend();
-  backendUrl = baseUrl;
+  let baseUrl = backendUrl;
+  if (!baseUrl) {
+    baseUrl = await startBackend(currentHost());
+    backendUrl = baseUrl;
+  }
   window = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -91,7 +126,47 @@ async function createWindow() {
     if (/^https?:\/\//.test(url)) void shell.openExternal(url);
     return { action: "deny" };
   });
+  window.on("close", (event) => {
+    if (!quitting && deploySettings.backgroundEnabled) { event.preventDefault(); window?.hide(); }
+  });
   await window.loadURL(baseUrl);
+}
+
+async function showOrCreateWindow() {
+  if (window && !window.isDestroyed()) { window.show(); window.focus(); return; }
+  await createWindow();
+}
+
+function createTray() {
+  tray = new Tray(nativeImage.createEmpty());
+  tray.setToolTip("家庭健康档案");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "打开主窗口", click: () => void showOrCreateWindow() },
+    { type: "separator" },
+    { label: "退出", click: () => app.quit() },
+  ]));
+  tray.on("click", () => void showOrCreateWindow());
+}
+
+async function deployStatusPayload() {
+  return {
+    backgroundEnabled: deploySettings.backgroundEnabled,
+    autostart: app.getLoginItemSettings().openAtLogin,
+    port: backendUrl ? new URL(backendUrl).port : null,
+  };
+}
+
+async function setBackgroundMode(enabled: boolean) {
+  if (deploySettings.backgroundEnabled === enabled) return;
+  deploySettings.backgroundEnabled = enabled;
+  await saveDeploySettings();
+  if (!backendUrl) return;
+  healthAgent?.stop();
+  await stopBackend();
+  const baseUrl = await startBackend(currentHost());
+  backendUrl = baseUrl;
+  await initHealthAgent(baseUrl);
+  if (window && !window.isDestroyed()) await window.loadURL(baseUrl);
 }
 
 async function stopBackend() {
@@ -131,6 +206,17 @@ ipcMain.handle("agent:save-settings", (_event, value) => healthAgent?.saveSettin
 ipcMain.handle("agent:login", (_event, value) => healthAgent?.login(value.provider, value.type, value.apiKey));
 ipcMain.handle("agent:logout", (_event, provider) => healthAgent?.logout(provider));
 ipcMain.on("agent:response", (_event, { id, value }) => healthAgent?.respond(id, value));
+
+ipcMain.handle("deploy:status", () => deployStatusPayload());
+ipcMain.handle("deploy:set-background", async (_event, enabled: boolean) => {
+  await setBackgroundMode(Boolean(enabled));
+  return deployStatusPayload();
+});
+ipcMain.handle("deploy:set-autostart", (_event, enabled: boolean) => {
+  app.setLoginItemSettings({ openAtLogin: Boolean(enabled), openAsHidden: true, args: enabled ? ["--background"] : [] });
+  return deployStatusPayload();
+});
+ipcMain.handle("deploy:check-tailscale", async () => ({ ip: await getTailscaleIp() }));
 
 ipcMain.handle("report:select", async () => {
   if (!backendUrl) throw new Error("健康档案后端尚未就绪");
@@ -277,7 +363,7 @@ async function replaceDatabaseWithPreparedBackup(prepared: any, preRestoreFilena
     await moveSidecarFiles(targetDb, timestamp);
     await rename(tempDb, targetDb);
 
-    const newUrl = await startBackend();
+    const newUrl = await startBackend(currentHost());
     backendUrl = newUrl;
     await initHealthAgent(newUrl);
     if (window && !window.isDestroyed()) await window.loadURL(newUrl);
@@ -309,7 +395,7 @@ async function rollbackRestore(targetDb: string, tempDb: string, beforeDb: strin
     try { await rename(beforeDb, targetDb); } catch {}
   }
   try {
-    const oldUrl = await startBackend();
+    const oldUrl = await startBackend(currentHost());
     backendUrl = oldUrl;
     await initHealthAgent(oldUrl);
     if (window && !window.isDestroyed()) await window.loadURL(oldUrl);
@@ -341,9 +427,18 @@ function parseApiError(text: string) {
 }
 
 app.on("before-quit", () => { quitting = true; void stopBackend(); });
-app.whenReady().then(createWindow).catch((error) => {
+app.whenReady().then(async () => {
+  await loadDeploySettings();
+  createTray();
+  if (process.argv.includes("--background")) {
+    backendUrl = await startBackend(currentHost());
+    await initHealthAgent(backendUrl);
+  } else {
+    await createWindow();
+  }
+}).catch((error) => {
   console.error(error);
   app.quit();
 });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
-app.on("activate", () => { if (!BrowserWindow.getAllWindows().length) void createWindow(); });
+app.on("activate", () => { void showOrCreateWindow(); });
