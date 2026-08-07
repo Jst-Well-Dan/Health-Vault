@@ -535,6 +535,7 @@ hr.dash { border: none; border-top: 1.5px dashed var(--line); margin: 10px 0; }
 }
 .family-simple__counts {
   display: flex;
+  margin-right: auto;
   gap: 8px;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -2153,12 +2154,61 @@ hr.dash { border: none; border-top: 1.5px dashed var(--line); margin: 10px 0; }
 .report-import-help { color: var(--ink-soft); font-size: 13px; line-height: 1.7; }
 .report-import-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
 .report-import-label { display: block; margin: 16px 0 7px; color: var(--ink-soft); font-size: 13px; }
-.report-import-json { box-sizing: border-box; width: 100%; min-height: 320px; padding: 12px; border: 1.5px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: 12px/1.55 'JetBrains Mono', monospace; resize: vertical; }
 .report-import-status { margin-top: 14px; color: var(--ink-soft); }
 .report-import-error { margin-top: 14px; padding: 10px; border: 1px solid var(--danger); color: var(--danger); background: color-mix(in oklab, var(--danger) 9%, var(--paper)); }
 .report-import-success { padding: 12px; border: 1.5px solid var(--line); border-radius: 8px; background: color-mix(in oklab, var(--accent-2) 20%, var(--paper)); }
 .report-import-success h4 { margin: 0; font-family: 'Caveat', cursive; font-size: 25px; }
 .report-import-success p { overflow-wrap: anywhere; line-height: 1.6; }
+
+.report-import-form { margin-top: 4px; }
+.field-flag > span { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.field-flag input, .field-flag select, .field-flag textarea {
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 12%, var(--paper));
+}
+.field-flag-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--accent) 30%, var(--paper));
+  color: var(--ink);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+.report-import-name-warning {
+  margin: 4px 0 14px;
+  padding: 10px 12px;
+  border: 1.5px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--accent) 14%, var(--paper));
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.report-import-name-ack { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; }
+.report-import-name-ack input { width: auto; }
+.report-import-labs-head { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+.report-import-labs-wrap { overflow-x: auto; }
+.report-import-labs { width: 100%; min-width: 680px; border-collapse: collapse; margin-top: 6px; }
+.report-import-labs th, .report-import-labs td { border: 1px solid var(--rule); padding: 4px 5px; }
+.report-import-labs th { font-family: 'JetBrains Mono', monospace; font-size: 9.5px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: 0.08em; text-align: left; }
+.report-import-labs input, .report-import-labs select {
+  width: 100%; border: 1.5px solid var(--line); border-radius: 5px; padding: 4px 6px;
+  font-family: 'Kalam', cursive; font-size: 13px; background: var(--paper); color: var(--ink);
+}
+.report-import-labs select { min-width: 66px; }
+.report-import-labs tr.field-flag td { background: color-mix(in oklab, var(--accent) 10%, var(--paper)); }
+.report-import-labs-empty { color: var(--ink-soft); font-size: 12px; text-align: center; padding: 10px; border-style: dashed; }
+.lab-remove { border: none; background: transparent; color: var(--danger); font-size: 16px; line-height: 1; cursor: pointer; padding: 2px 6px; }
+.report-import-raw { margin-top: 16px; color: var(--ink-soft); font-size: 12px; }
+.report-import-raw summary { cursor: pointer; }
+.report-import-raw pre {
+  margin-top: 8px; max-height: 240px; overflow: auto; padding: 10px;
+  border: 1.5px solid var(--rule); border-radius: 8px; background: var(--bg); color: var(--ink);
+  font: 11px/1.55 'JetBrains Mono', monospace; white-space: pre-wrap; word-break: break-word;
+}
 
 .agent-fab { position: fixed; right: 22px; bottom: 22px; z-index: 120; width: 52px; height: 52px; border: 2px solid var(--line); border-radius: 50%; background: var(--accent); box-shadow: 3px 3px 0 var(--line); font-size: 24px; cursor: pointer; transition: opacity .2s ease, transform .2s ease; }
 .agent-fab.panel-open { opacity: 0; pointer-events: none; transform: scale(.8); }
@@ -2187,4 +2237,16 @@ hr.dash { border: none; border-top: 1.5px dashed var(--line); margin: 10px 0; }
 .agent-actions .primary { background: var(--ink); color: var(--paper); }
 .agent-settings label { display: grid; gap: 5px; margin: 12px 0; }
 .agent-settings select, .agent-settings input { min-height: 40px; padding: 7px; border: 1.5px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); }
+.agent-settings label.agent-settings__toggle { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }
+.agent-settings__toggle input[type="checkbox"] { flex: 0 0 auto; width: 18px; min-height: 18px; height: 18px; margin: 2px 0 0; padding: 0; }
+.agent-settings__toggle span { line-height: 1.5; }
+.app-settings-panel__head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 14px; }
+.app-settings-panel__title { font-family: 'Caveat', cursive; font-size: 32px; font-weight: 700; line-height: 1; }
+.app-settings-panel__list { display: grid; gap: 10px; }
+.app-settings-panel__item { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 14px; color: var(--ink); text-align: left; cursor: pointer; background: var(--paper-2); }
+.app-settings-panel__item span { display: grid; gap: 4px; }
+.app-settings-panel__item strong { font-family: 'Caveat', cursive; font-size: 24px; line-height: 1; }
+.app-settings-panel__item small { color: var(--ink-soft); line-height: 1.5; }
+.app-settings-panel__item > b { font-family: 'JetBrains Mono', monospace; font-size: 22px; }
+.app-settings-panel__item:disabled { cursor: not-allowed; opacity: .55; }
 @media (max-width: 640px) { .agent-diff { grid-template-columns: 1fr; } .agent-fab { right: 14px; bottom: 14px; } }

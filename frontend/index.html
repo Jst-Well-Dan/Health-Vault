@@ -11,7 +11,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600;700&family=Kalam:wght@300;400;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260426-mobile-modal">
+  <link rel="stylesheet" href="style.css?v=20260807-settings">
 
   <!-- Runtime dependencies are vendored for offline desktop use. Keep this order: React/Babel/libs before JSX. -->
   <script src="vendor/react.development.js"></script>
@@ -25,13 +25,14 @@
   <div id="root"></div>
 
   <script type="text/babel" src="components/primitives.jsx?v=20260426-mobile-modal"></script>
-  <script type="text/babel" src="components/member_editor.jsx?v=20260803-member-management"></script>
+  <script type="text/babel" src="components/member_editor.jsx?v=20260803-member-avatar"></script>
   <script type="text/babel" src="components/backup_panel.jsx?v=20260803-backups"></script>
+  <script type="text/babel" src="components/settings_panel.jsx?v=20260807-app-settings"></script>
   <script type="text/babel" src="components/screen_family.jsx?v=20260803-member-management"></script>
-  <script type="text/babel" src="components/report_import.jsx?v=20260803-report-import"></script>
+  <script type="text/babel" src="components/report_import.jsx?v=20260807-report-import-form"></script>
   <script type="text/babel" src="components/attachment_upload.jsx?v=20260803-attachment-upload"></script>
   <script type="text/babel" src="components/screen_member.jsx?v=20260803-attachment-upload"></script>
-  <script type="text/babel" src="components/agent_panel.jsx?v=20260803-electron-agent"></script>
+  <script type="text/babel" src="components/agent_panel.jsx?v=20260807-app-settings"></script>
 
   <script type="text/babel" data-presets="react">
 
@@ -63,6 +64,8 @@
       const [error, setError] = React.useState('');
       const [memberEditor, setMemberEditor] = React.useState(null);
       const [backupOpen, setBackupOpen] = React.useState(false);
+      const [settingsOpen, setSettingsOpen] = React.useState(false);
+      const [agentSettingsAction, setAgentSettingsAction] = React.useState(null);
       const [meta, setMeta] = React.useState({ mock_mode: false });
 
       React.useEffect(() => {
@@ -142,7 +145,7 @@
             </div>
             <div className="meta">
               {meta.mock_mode && <span className="mode-badge">模拟模式</span>}
-              <Btn ghost onClick={() => setBackupOpen(true)}>数据备份</Btn>
+              <Btn ghost onClick={() => setSettingsOpen(true)}>设置</Btn>
             </div>
           </div>
 
@@ -211,6 +214,15 @@
               </div>
             </div>
           </div>
+          {settingsOpen && <SettingsPanel
+            agentAvailable={Boolean(window.healthAgent)}
+            onClose={() => setSettingsOpen(false)}
+            onSelect={(section) => {
+              setSettingsOpen(false);
+              if (section === 'backup') setBackupOpen(true);
+              else setAgentSettingsAction({ section, requestedAt: Date.now() });
+            }}
+          />}
           {backupOpen && <BackupPanel onClose={() => setBackupOpen(false)} />}
           {memberEditor && <MemberEditorModal
             mode={memberEditor.mode}
@@ -219,7 +231,11 @@
             onClose={() => setMemberEditor(null)}
             onSaved={handleMemberSaved}
           />}
-          {window.healthAgent && <AgentPanel onDataChanged={loadShellData} />}
+          {window.healthAgent && <AgentPanel
+            onDataChanged={loadShellData}
+            settingsAction={agentSettingsAction}
+            onSettingsActionHandled={() => setAgentSettingsAction(null)}
+          />}
         </div>
       );
     }

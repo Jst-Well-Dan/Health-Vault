@@ -48,8 +48,12 @@ const isPet = (m) => m.species && m.species !== 'human';
 const speciesLabel = (m) => {
   if (!isPet(m)) return '家庭成员';
   if (m.species === 'cat') return '猫咪';
+  if (m.species === 'dog') return '狗狗';
+  if (m.species === 'other') return m.species_detail || '其他宠物';
   return m.species || '宠物';
 };
+
+const sexLabel = (m) => isPet(m) ? ({ 公: '弟弟', 母: '妹妹' }[m.sex] || m.sex) : m.sex;
 
 const compactDate = (date) => date ? date.replaceAll('-', '.') : '未录';
 
@@ -58,7 +62,7 @@ const memberStatus = (m) => {
     const homeDays = familyDaysSince(m.home_date);
     return `${speciesLabel(m)} · ${petAgeText(m.birth_date)}${homeDays === null ? '' : ` · 到家${homeDays}天`}`;
   }
-  const tags = [m.role || '成员', m.sex, humanAgeText(m.birth_date)].filter(Boolean);
+  const tags = [m.role || '成员', sexLabel(m), humanAgeText(m.birth_date)].filter(Boolean);
   return tags.join(' · ');
 };
 
@@ -66,9 +70,9 @@ const memberWarn = () => false;
 
 const memberMeta = (m) => {
   if (isPet(m)) {
-    return [m.breed || speciesLabel(m), m.sex, petAgeText(m.birth_date)].filter(Boolean).join(' · ');
+    return [m.breed || speciesLabel(m), sexLabel(m), petAgeText(m.birth_date)].filter(Boolean).join(' · ');
   }
-  return [m.role || '家庭成员', m.sex, humanAgeText(m.birth_date)].filter(Boolean).join(' · ');
+  return [m.role || '家庭成员', sexLabel(m), humanAgeText(m.birth_date)].filter(Boolean).join(' · ');
 };
 
 const memberStats = (m) => {
@@ -114,7 +118,6 @@ const ScreenFamily = ({ members = [], archivedMembers = [], loading = false, onO
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <Btn primary onClick={() => onCreateMember?.('human')}>+ 新增家庭成员</Btn>
-          <Btn onClick={() => onCreateMember?.('pet')}>+ 新增宠物</Btn>
         </div>
       </section>
 
@@ -125,7 +128,6 @@ const ScreenFamily = ({ members = [], archivedMembers = [], loading = false, onO
           <p className="mono" style={{ color: 'var(--ink-soft)' }}>请先新增成员，再导入报告、记录用药、体重和提醒。</p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', marginTop: 14 }}>
             <Btn primary onClick={() => onCreateMember?.('human')}>+ 新增家庭成员</Btn>
-            <Btn onClick={() => onCreateMember?.('pet')}>+ 新增宠物</Btn>
           </div>
         </section>
       )}

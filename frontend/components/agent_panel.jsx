@@ -1,4 +1,4 @@
-function AgentPanel({ onDataChanged }) {
+function AgentPanel({ onDataChanged, settingsAction, onSettingsActionHandled }) {
   const bridge = window.healthAgent;
   const [open, setOpen] = React.useState(false);
   const [messages, setMessages] = React.useState([]);
@@ -22,6 +22,13 @@ function AgentPanel({ onDataChanged }) {
   }, []);
 
   React.useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, open]);
+
+  React.useEffect(() => {
+    if (!settingsAction) return;
+    if (settingsAction.section === 'remote') openDeploy();
+    if (settingsAction.section === 'ai') setSettingsOpen(true);
+    onSettingsActionHandled?.();
+  }, [settingsAction]);
 
   const handleEvent = (event) => {
     if (event.type === 'delta') {
@@ -130,7 +137,7 @@ function AgentPanel({ onDataChanged }) {
   return <>
     <button className={`agent-fab ${open ? 'panel-open' : ''}`} onClick={() => setOpen(value => !value)} aria-label="打开健康助手">✦</button>
     <aside className={`agent-panel ${open ? 'open' : ''}`} aria-hidden={!open}>
-      <header><div><b>健康档案助手</b><small>只使用受限健康数据工具</small></div><div><button onClick={openDeploy}>远程访问</button><button onClick={() => setSettingsOpen(true)}>设置</button><button onClick={() => setOpen(false)}>×</button></div></header>
+      <header><div><b>健康档案助手</b><small>只使用受限健康数据工具</small></div><div><button onClick={() => setOpen(false)}>×</button></div></header>
       <div className="agent-messages">
         {!messages.length && <div className="agent-empty">可以问：“爸爸最近在吃什么药？”<br/>写入前会展示实际字段并等待你确认。</div>}
         {messages.map((message, index) => <div key={message.id || index} className={`agent-message ${message.role}`}>{message.content}</div>)}
@@ -146,8 +153,8 @@ function AgentPanel({ onDataChanged }) {
 
     {deployOpen && deploy && <div className="agent-modal-backdrop"><div className="agent-dialog agent-settings">
       <h3>远程访问 / 后台服务</h3>
-      <label><input type="checkbox" checked={deploy.backgroundEnabled} disabled={deployBusy} onChange={e => toggleBackground(e.target.checked)} /> 允许手机在后台访问（关闭窗口后转为托盘后台运行，服务将监听所有网络接口）</label>
-      <label><input type="checkbox" checked={deploy.autostart} onChange={e => toggleAutostart(e.target.checked)} /> 开机自动后台启动</label>
+      <label className="agent-settings__toggle"><input type="checkbox" checked={deploy.backgroundEnabled} disabled={deployBusy} onChange={e => toggleBackground(e.target.checked)} /><span>允许手机在后台访问（关闭窗口后转为托盘后台运行，服务将监听所有网络接口）</span></label>
+      <label className="agent-settings__toggle"><input type="checkbox" checked={deploy.autostart} onChange={e => toggleAutostart(e.target.checked)} /><span>开机自动后台启动</span></label>
       <div className="agent-actions"><button onClick={checkTailscale}>检测 Tailscale</button></div>
       {tailscaleIp === null && <div className="agent-tool">未检测到 Tailscale，请确认电脑已安装并登录</div>}
       {tailscaleIp && deploy.port && <div className="agent-tool">手机访问地址：http://{tailscaleIp}:{deploy.port}/</div>}

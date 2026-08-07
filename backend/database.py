@@ -142,6 +142,7 @@ def init_db() -> None:
               blood_type  TEXT,
               role        TEXT,
               species     TEXT NOT NULL DEFAULT 'human',
+              species_detail TEXT,
               sort_order  INTEGER DEFAULT 0,
               breed       TEXT,
               home_date   TEXT,
@@ -308,6 +309,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE members ADD COLUMN breed TEXT")
         if "home_date" not in member_cols:
             conn.execute("ALTER TABLE members ADD COLUMN home_date TEXT")
+        if "species_detail" not in member_cols:
+            conn.execute("ALTER TABLE members ADD COLUMN species_detail TEXT")
         if "sort_order" not in member_cols:
             conn.execute("ALTER TABLE members ADD COLUMN sort_order INTEGER")
         if "archived_at" not in member_cols:

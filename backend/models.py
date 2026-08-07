@@ -14,10 +14,10 @@ class MemberBase(BaseModel):
     blood_type: Optional[str] = None
     role: Optional[str] = None
     species: Optional[str] = None
+    species_detail: Optional[str] = None
     sort_order: Optional[int] = None
     breed: Optional[str] = None
     home_date: Optional[str] = None
-    chip_id: Optional[str] = None
     doctor: Optional[str] = None
     allergies: Optional[list[str]] = None
     chronic: Optional[list[str]] = None
@@ -46,10 +46,10 @@ class MemberOut(BaseModel):
     blood_type: Optional[str] = None
     role: Optional[str] = None
     species: str
+    species_detail: Optional[str] = None
     sort_order: int = 0
     breed: Optional[str] = None
     home_date: Optional[str] = None
-    chip_id: Optional[str] = None
     doctor: Optional[str] = None
     allergies: list[str] = Field(default_factory=list)
     chronic: list[str] = Field(default_factory=list)

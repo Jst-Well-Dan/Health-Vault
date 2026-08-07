@@ -39,11 +39,28 @@ try {
     const settings = await window.healthAgent.getSettings();
     const history = await window.healthAgent.getHistory();
     const backupInfo = await window.healthBackup.info();
-    const backupButton = await waitFor(() => Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('数据备份')));
+    const settingsButton = await waitFor(() => Array.from(document.querySelectorAll('button')).find(button => button.textContent?.trim() === '设置'));
+    settingsButton?.click();
+    const settingsPanel = await waitFor(() => document.querySelector('.app-settings-panel'));
+    const settingsText = settingsPanel?.textContent || '';
+    const backupButton = Array.from(settingsPanel?.querySelectorAll('button') || []).find(button => button.textContent?.includes('数据备份'));
     backupButton?.click();
     await waitFor(() => document.body.textContent?.includes('用户可控恢复'));
     const backupPanelText = document.body.textContent || '';
     Array.from(document.querySelectorAll('button')).find(button => button.textContent?.trim() === '关闭')?.click();
+
+    settingsButton?.click();
+    const remoteButton = await waitFor(() => Array.from(document.querySelectorAll('.app-settings-panel__item')).find(button => button.textContent?.includes('远程访问')));
+    remoteButton?.click();
+    const remoteSettings = Boolean(await waitFor(() => Array.from(document.querySelectorAll('.agent-dialog h3')).find(title => title.textContent?.includes('远程访问'))));
+    Array.from(document.querySelectorAll('.agent-dialog button')).find(button => button.textContent?.trim() === '关闭')?.click();
+
+    settingsButton?.click();
+    const aiButton = await waitFor(() => Array.from(document.querySelectorAll('.app-settings-panel__item')).find(button => button.textContent?.includes('AI 配置')));
+    aiButton?.click();
+    const aiSettings = Boolean(await waitFor(() => Array.from(document.querySelectorAll('.agent-dialog h3')).find(title => title.textContent?.includes('模型设置'))));
+    Array.from(document.querySelectorAll('.agent-dialog button')).find(button => button.textContent?.trim() === '取消')?.click();
+
     document.querySelectorAll('.screen-tab')[1]?.click();
     const importButton = await waitFor(() => Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('上传报告/附件')));
     importButton?.click();
@@ -69,8 +86,12 @@ try {
       backupRestoreBridge: typeof window.healthBackup.validate === 'function' && typeof window.healthBackup.prepareRestore === 'function' && typeof window.healthBackup.restore === 'function',
       attachmentBridge: typeof window.healthAttachment === 'object',
       backupInfo: typeof backupInfo?.database_path === 'string' && typeof backupInfo?.backup_dir === 'string',
+      settingsButton: Boolean(settingsButton),
+      settingsSections: settingsText.includes('数据备份') && settingsText.includes('远程访问') && settingsText.includes('AI 配置'),
       backupButton: Boolean(backupButton),
       backupRestoreText: backupPanelText.includes('只恢复数据库') && backupPanelText.includes('恢复前会校验备份'),
+      remoteSettings,
+      aiSettings,
       attachmentAddButton: Boolean(attachmentAddButton),
       attachmentUploadModal: Boolean(attachmentUploadModal),
       importButton: Boolean(importButton),
@@ -80,7 +101,7 @@ try {
     };
   })()`);
   Object.assign(result, ipc);
-  if (result.title !== "家庭健康档案" || !result.bridge || result.agentButton !== 1 || !result.rootText || !result.providers || !result.models || !result.history || !result.reportBridge || !result.backupBridge || !result.backupRestoreBridge || !result.attachmentBridge || !result.backupInfo || !result.backupButton || !result.backupRestoreText || !result.attachmentAddButton || !result.attachmentUploadModal || !result.importButton || !result.importModal || !result.attachmentImportButton || !result.attachmentImportModal) {
+  if (result.title !== "家庭健康档案" || !result.bridge || result.agentButton !== 1 || !result.rootText || !result.providers || !result.models || !result.history || !result.reportBridge || !result.backupBridge || !result.backupRestoreBridge || !result.attachmentBridge || !result.backupInfo || !result.settingsButton || !result.settingsSections || !result.backupButton || !result.backupRestoreText || !result.remoteSettings || !result.aiSettings || !result.attachmentAddButton || !result.attachmentUploadModal || !result.importButton || !result.importModal || !result.attachmentImportButton || !result.attachmentImportModal) {
     throw new Error(`Electron 页面检查失败: ${JSON.stringify(result)}`);
   }
   console.log(JSON.stringify(result));

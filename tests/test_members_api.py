@@ -31,6 +31,17 @@ class MembersApiTest(unittest.TestCase):
         self.assertIsNone(member.get("archived_at"))
         self.assertEqual([m["key"] for m in list_members()], [member["key"]])
 
+    def test_create_other_pet_persists_custom_type_and_pet_sex(self):
+        member = create_member(MemberCreate(
+            name="团团",
+            species="other",
+            species_detail="兔",
+            sex="妹妹",
+        ))
+        self.assertEqual(member["species_detail"], "兔")
+        self.assertEqual(member["sex"], "妹妹")
+        self.assertNotIn("chip_id", member)
+
     def test_duplicate_explicit_key_returns_409(self):
         create_member(MemberCreate(key="safe-key_1", name="小白", species="cat"))
         with self.assertRaises(HTTPException) as ctx:
@@ -88,6 +99,7 @@ class MembersApiTest(unittest.TestCase):
         with get_conn() as conn:
             cols = {row[1] for row in conn.execute("PRAGMA table_info(members)").fetchall()}
             self.assertIn("archived_at", cols)
+            self.assertIn("species_detail", cols)
             self.assertIsNone(conn.execute("SELECT archived_at FROM members WHERE key = 'legacy'").fetchone()["archived_at"])
 
 

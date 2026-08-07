@@ -252,11 +252,13 @@ const copyTextToClipboard = async (text) => {
 
 const speciesText = (m, weights) => {
   if (!m) return '';
-  if (!isPet(m)) return `${memberAge(m.birth_date)}岁 · ${m.sex || '未录性别'} · ${m.blood_type || '血型未录'} · ${(m.allergies || []).length ? `过敏: ${m.allergies.join('/')}` : '无过敏史'} · ${(m.chronic || []).length ? `慢病: ${m.chronic.join('/')}` : '无慢病'}`;
+  const sex = isPet(m) ? ({ 公: '弟弟', 母: '妹妹' }[m.sex] || m.sex) : m.sex;
+  if (!isPet(m)) return `${memberAge(m.birth_date)}岁 · ${sex || '未录性别'} · ${m.blood_type || '血型未录'} · ${(m.allergies || []).length ? `过敏: ${m.allergies.join('/')}` : '无过敏史'} · ${(m.chronic || []).length ? `慢病: ${m.chronic.join('/')}` : '无慢病'}`;
   const latestWeight = weights[weights.length - 1];
-  const chip = m.chip_id ? ` · 芯片 ${m.chip_id}` : '';
+  const type = m.species_detail || ({ cat: '猫', dog: '狗', other: '其他宠物' }[m.species] || '宠物');
+  const breed = m.breed ? ` · ${m.breed}` : '';
   const home = m.home_date ? ` · 到家 ${m.home_date}` : '';
-  return `${m.breed || '猫'} · ${m.sex || '未录称呼'} · ${memberAge(m.birth_date)}岁${home}${latestWeight ? ` · ${formatWeight(latestWeight.weight_kg)} kg` : ''}${chip}`;
+  return `${type}${breed} · ${sex || '未录性别'} · ${memberAge(m.birth_date)}岁${home}${latestWeight ? ` · ${formatWeight(latestWeight.weight_kg)} kg` : ''}`;
 };
 
 /* ── Static enriched detail for known reports ──────────────── */
@@ -971,7 +973,6 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
         <p className="mono" style={{ color: 'var(--ink-soft)' }}>请先新增家庭成员或宠物，再开始整理健康档案。</p>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'center', flexWrap: 'wrap', marginTop: 14 }}>
           <Btn primary onClick={() => onCreateMember?.('human')}>+ 新增家庭成员</Btn>
-          <Btn onClick={() => onCreateMember?.('pet')}>+ 新增宠物</Btn>
         </div>
       </section>
     );
