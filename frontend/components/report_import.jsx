@@ -51,7 +51,7 @@ const FieldLabel = ({ label, required, flagged, className = '', children }) => (
 );
 
 function ReportImportModal({ member, onClose, onImported }) {
-  const bridge = window.healthReport;
+  const fileInputRef = React.useRef(null);
   const [source, setSource] = React.useState(null);
   const [proposal, setProposal] = React.useState(null);
   const [form, setForm] = React.useState(null);
@@ -61,15 +61,23 @@ function ReportImportModal({ member, onClose, onImported }) {
   const [error, setError] = React.useState('');
   const [result, setResult] = React.useState(null);
 
-  if (!bridge) return null;
 
   const reset = () => { setProposal(null); setForm(null); setLabs([]); setNameOverride(false); };
 
-  const selectFile = async () => {
+  const selectFile = () => fileInputRef.current?.click();
+
+  const stageFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
     setBusy(true); setError(''); setResult(null); reset();
     try {
-      const next = await bridge.select();
-      if (next) setSource(next);
+      const formData = new FormData();
+      formData.append('file', file, file.name);
+      const response = await fetch('/api/imports/stage', { method: 'POST', body: formData });
+      const text = await response.text();
+      if (!response.ok) throw new Error(JSON.parse(text).detail || '报告暂存失败');
+      setSource(JSON.parse(text));
     } catch (err) { setError(err.message || String(err)); }
     finally { setBusy(false); }
   };
@@ -78,7 +86,10 @@ function ReportImportModal({ member, onClose, onImported }) {
     if (!source) return;
     setBusy(true); setError('');
     try {
-      const next = await bridge.analyze(source, { key: member.key, name: member.name });
+      const response = await fetch('/api/agent-runtime/report/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, member: { key: member.key, name: member.name } }) });
+      const text = await response.text();
+      if (!response.ok) throw new Error(JSON.parse(text).detail || '报告解析失败');
+      const next = JSON.parse(text);
       setProposal(next);
       setForm(formFromProposal(next));
       setLabs(labsFromProposal(next));
@@ -159,11 +170,17 @@ function ReportImportModal({ member, onClose, onImported }) {
     const payload = { ...buildPayload(), source_id: source.id, member_key: member.key };
     setBusy(true);
     try {
-      const dryRun = await bridge.dryRun(payload);
+      const dryRunResponse = await fetch('/api/imports/dry-run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const dryRunText = await dryRunResponse.text();
+      if (!dryRunResponse.ok) throw new Error(JSON.parse(dryRunText).detail || 'dry-run 失败');
+      const dryRun = JSON.parse(dryRunText);
       setBusy(false);
       if (!window.confirm(`dry-run 通过：将新增 ${dryRun.visit_count} 条就诊、${dryRun.lab_count} 条指标和 ${dryRun.attachment_count} 份附件。\n\n确认把「${source.filename}」写入 ${member.name} 的健康档案吗？应用将归档原件并创建数据库备份。`)) return;
       setBusy(true);
-      const next = await bridge.commit(payload);
+      const commitResponse = await fetch('/api/imports/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const commitText = await commitResponse.text();
+      if (!commitResponse.ok) throw new Error(JSON.parse(commitText).detail || '报告写入失败');
+      const next = JSON.parse(commitText);
       setResult(next);
       await onImported?.(next);
     } catch (err) { setError(err.message || String(err)); }
@@ -180,6 +197,7 @@ function ReportImportModal({ member, onClose, onImported }) {
 
         {!result && <>
           <p className="report-import-help">选择 PDF 或图片后，原件会先暂存于本机。解析会把报告页面发送给你在健康助手中配置的视觉模型；请确认你接受该模型服务的隐私政策。</p>
+          <input ref={fileInputRef} type="file" accept=".pdf,image/png,image/jpeg,image/webp,image/bmp" onChange={stageFile} hidden />
           <div className="report-import-actions">
             <Btn primary onClick={selectFile} disabled={busy}>{source ? '重新选择报告' : '选择报告文件'}</Btn>
             {source && <span className="mono">{source.filename} · {source.page_count} 页</span>}

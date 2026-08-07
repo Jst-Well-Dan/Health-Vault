@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 
 ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("HEALTH_APP_PASSWORD", "test-family-password")
 sys.path.insert(0, str(ROOT / "backend"))
 
 import database  # noqa: E402
@@ -23,11 +24,14 @@ class BackupsApiTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp.name) / "data" / "health.db"
+        os.environ["HEALTH_VAULT_HOME"] = self.temp.name
         database.DB_PATH = self.db_path
         init_db()
         self.client = TestClient(app)
+        self.client.post("/api/auth/login", json={"password": "test-family-password"})
 
     def tearDown(self):
+        os.environ.pop("HEALTH_VAULT_HOME", None)
         self.temp.cleanup()
 
     def test_info_does_not_create_backup_dir_or_files(self):

@@ -20,11 +20,18 @@ data/**/*.db-shm
 data/**/*.db-wal
 data/backups/
 data/log/
+data/agent-runtime-secret.bin
+data/session-key.bin
+data/agent-key.bin
+data/agent-credentials.json
+data/agent-settings.json
+data/sessions/
 
 # Frontend
 node_modules/
 dist/
 dist-electron/
+dist-server/
 build/
 
 # IDEs and local agent artifacts

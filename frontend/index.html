@@ -215,7 +215,7 @@
             </div>
           </div>
           {settingsOpen && <SettingsPanel
-            agentAvailable={Boolean(window.healthAgent)}
+            agentAvailable={true}
             onClose={() => setSettingsOpen(false)}
             onSelect={(section) => {
               setSettingsOpen(false);
@@ -231,11 +231,11 @@
             onClose={() => setMemberEditor(null)}
             onSaved={handleMemberSaved}
           />}
-          {window.healthAgent && <AgentPanel
+          <AgentPanel
             onDataChanged={loadShellData}
             settingsAction={agentSettingsAction}
             onSettingsActionHandled={() => setAgentSettingsAction(null)}
-          />}
+          />
         </div>
       );
     }

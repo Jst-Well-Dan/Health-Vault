@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
+import { chmod, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -24,7 +24,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import { Type, type TSchema } from "typebox";
-import { safeStorage, type WebContents } from "electron";
+
 
 type Json = Record<string, any>;
 type Settings = { provider: string; model: string; source?: "pi" | "desktop" };
@@ -54,16 +54,15 @@ class PiModelsStore implements ModelsStore {
 
 class EncryptedCredentialStore implements CredentialStore {
   private values: Record<string, Credential> = {};
-  constructor(private readonly path: string) {}
+  private key?: Buffer;
+  constructor(private readonly path: string, private readonly keyPath: string) {}
 
   async load() {
     try {
-      const stored = await readFile(this.path, "utf8");
-      const [mode, payload] = stored.split(":", 2);
-      const raw = mode === "safe"
-        ? safeStorage.decryptString(Buffer.from(payload, "base64"))
-        : Buffer.from(payload, "base64").toString("utf8");
-      this.values = JSON.parse(raw);
+      const stored = JSON.parse(await readFile(this.path, "utf8")) as { iv: string; tag: string; ciphertext: string };
+      const decipher = createDecipheriv("aes-256-gcm", await this.encryptionKey(), Buffer.from(stored.iv, "base64"));
+      decipher.setAuthTag(Buffer.from(stored.tag, "base64"));
+      this.values = JSON.parse(Buffer.concat([decipher.update(Buffer.from(stored.ciphertext, "base64")), decipher.final()]).toString("utf8"));
     } catch { this.values = {}; }
   }
   async read(providerId: string) { return this.values[providerId]; }
@@ -77,12 +76,25 @@ class EncryptedCredentialStore implements CredentialStore {
     return next;
   }
   async delete(providerId: string) { delete this.values[providerId]; await this.save(); }
+  private async encryptionKey() {
+    if (this.key) return this.key;
+    try {
+      const key = await readFile(this.keyPath);
+      if (key.length !== 32) throw new Error("invalid key length");
+      this.key = key;
+    } catch {
+      this.key = randomBytes(32);
+      await writeFile(this.keyPath, this.key, { mode: 0o600 });
+      await chmod(this.keyPath, 0o600).catch(() => undefined);
+    }
+    return this.key;
+  }
   private async save() {
-    const raw = JSON.stringify(this.values);
-    const encoded = safeStorage.isEncryptionAvailable()
-      ? `safe:${safeStorage.encryptString(raw).toString("base64")}`
-      : `plain:${Buffer.from(raw).toString("base64")}`;
-    await writeFile(this.path, encoded, "utf8");
+    const iv = randomBytes(12);
+    const cipher = createCipheriv("aes-256-gcm", await this.encryptionKey(), iv);
+    const ciphertext = Buffer.concat([cipher.update(JSON.stringify(this.values), "utf8"), cipher.final()]);
+    await writeFile(this.path, JSON.stringify({ iv: iv.toString("base64"), tag: cipher.getAuthTag().toString("base64"), ciphertext: ciphertext.toString("base64") }), { encoding: "utf8", mode: 0o600 });
+    await chmod(this.path, 0o600).catch(() => undefined);
   }
 }
 
@@ -100,11 +112,13 @@ export class HealthAgent {
 
   constructor(
     private readonly baseUrl: string,
-    private readonly webContents: () => WebContents | undefined,
     credentialPath: string,
     private readonly settingsPath: string,
+    keyPath: string,
+    private readonly runtimeSecret: string,
+    private readonly emitEvent: (value: unknown) => void,
   ) {
-    this.credentials = new EncryptedCredentialStore(credentialPath);
+    this.credentials = new EncryptedCredentialStore(credentialPath, keyPath);
     this.models = builtinModels({
       credentials: this.credentials,
       modelsStore: new PiModelsStore(join(homedir(), ".pi", "agent", "models-store.json")),
@@ -375,7 +389,7 @@ export class HealthAgent {
   private async api(path: string, options: { method?: string; body?: unknown } = {}) {
     const response = await fetch(this.baseUrl + path, {
       method: options.method || "GET",
-      headers: options.body === undefined ? undefined : { "Content-Type": "application/json" },
+      headers: { ...(options.body === undefined ? {} : { "Content-Type": "application/json" }), "X-Health-Agent-Secret": this.runtimeSecret },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
     const text = await response.text();
@@ -383,7 +397,7 @@ export class HealthAgent {
     try { return JSON.parse(text); } catch { return text; }
   }
 
-  private emit(value: unknown) { this.webContents()?.send("agent:event", value); }
+  private emit(value: unknown) { this.emitEvent(value); }
   private responses = new Map<string, (value: any) => void>();
   private request(kind: string, payload: AuthPrompt | Json): Promise<any> {
     const id = randomUUID();

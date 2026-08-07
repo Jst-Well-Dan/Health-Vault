@@ -3,12 +3,12 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "outDir": "dist-electron",
-    "rootDir": "electron",
+    "outDir": "dist-server",
+    "rootDir": "agent-runtime",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["electron/**/*.ts", "electron/**/*.cts"]
+  "include": ["agent-runtime/**/*.ts"]
 }

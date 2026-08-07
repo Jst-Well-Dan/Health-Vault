@@ -10,6 +10,11 @@ if [[ -z "${PYTHON_BIN}" ]]; then
   exit 1
 fi
 
-echo "正在前台启动家庭健康档案服务..."
-cd "${PROJECT_ROOT}/backend"
-exec "${PYTHON_BIN}" -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+if [[ -z "${HEALTH_APP_PASSWORD:-}" ]]; then
+  echo "请先设置 HEALTH_APP_PASSWORD（家庭共享密码）。" >&2
+  exit 1
+fi
+
+echo "正在启动家庭健康档案 Web 服务..."
+cd "${PROJECT_ROOT}"
+HEALTH_HOST=0.0.0.0 npm run start

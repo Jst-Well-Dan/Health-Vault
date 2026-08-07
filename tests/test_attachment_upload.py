@@ -1,3 +1,4 @@
+import os
 import sys
 import tempfile
 import unittest
@@ -7,6 +8,7 @@ from fastapi.testclient import TestClient
 
 
 ROOT = Path(__file__).resolve().parents[1]
+os.environ.setdefault("HEALTH_APP_PASSWORD", "test-family-password")
 sys.path.insert(0, str(ROOT / "backend"))
 
 import database  # noqa: E402
@@ -19,6 +21,7 @@ class AttachmentUploadTest(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp.name) / "data" / "health.db"
+        os.environ["HEALTH_VAULT_HOME"] = self.temp.name
         database.DB_PATH = self.db_path
         init_db()
         with get_conn() as conn:
@@ -29,8 +32,10 @@ class AttachmentUploadTest(unittest.TestCase):
             other = conn.execute("INSERT INTO visits (member_key, date, type) VALUES ('pet', '2026-08-03', '就医')")
             self.other_visit_id = other.lastrowid
         self.client = TestClient(app)
+        self.client.post("/api/auth/login", json={"password": "test-family-password"})
 
     def tearDown(self):
+        os.environ.pop("HEALTH_VAULT_HOME", None)
         self.temp.cleanup()
 
     def _upload(self, filename="report.pdf", content=b"hello", data=None):

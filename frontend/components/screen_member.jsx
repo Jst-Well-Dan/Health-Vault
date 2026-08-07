@@ -1042,7 +1042,7 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
           </div>
           <div className="member-hero__actions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <Btn ghost onClick={() => onEditMember?.(member)}>编辑资料</Btn>
-            {window.healthReport && <Btn onClick={() => setReportImportOpen(true)}>+ 上传报告/附件</Btn>}
+            <Btn onClick={() => setReportImportOpen(true)}>+ 上传报告/附件</Btn>
             <Btn primary onClick={openChooser}>+ 新增记录</Btn>
           </div>
         </div>
@@ -1075,7 +1075,7 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
               {!isCat && tab === '体检报告' && <TabCheckup data={data} memberKey={member.key} reports={visitReports.filter(isCheckupReport)} onOpen={setDetail} onAddLab={() => openCreate('lab')} onEditLab={(item) => editItem('lab', item)} onDeleteLab={deleteLab} onEditVisit={editVisitId} />}
               {!isCat && tab === '就医记录' && <TabReports reports={visitReports} kind="就医" onOpen={setDetail} onAdd={() => openCreate('visit')} onEdit={editVisitReport} onDelete={deleteVisit} />}
               {!isCat && tab === '用药' && <TabMeds meds={data.meds} visits={data.visits} onAdd={() => openCreate('med')} onEdit={(item) => editItem('med', item)} onStop={stopMed} onDelete={deleteMed} />}
-              {!isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onAddAttachment={() => setAttachmentUploadOpen(true)} onImport={window.healthReport ? () => setReportImportOpen(true) : undefined} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
+              {!isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onAddAttachment={() => setAttachmentUploadOpen(true)} onImport={() => setReportImportOpen(true)} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
               {!isCat && tab === '提醒' && <TabReminders items={data.reminders} onAdd={() => openCreate('reminder')} onEdit={(item) => editItem('reminder', item)} onDone={completeReminder} onSkip={skipReminder} onDelete={deleteReminder} />}
 
               {isCat && tab === '概览' && (
@@ -1095,7 +1095,7 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
               {isCat && tab === '就医记录' && <TabReports reports={visitReports} kind="就医" onOpen={setDetail} onAdd={() => openCreate('visit')} onEdit={editVisitReport} onDelete={deleteVisit} />}
               {isCat && tab === '用药' && <TabMeds meds={data.meds} visits={data.visits} onAdd={() => openCreate('med')} onEdit={(item) => editItem('med', item)} onStop={stopMed} onDelete={deleteMed} />}
               {isCat && tab === '体重趋势' && <TabPetWeight member={member} weights={data.weights} onAdd={() => openCreate('weight')} onDelete={deleteWeight} />}
-              {isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onAddAttachment={() => setAttachmentUploadOpen(true)} onImport={window.healthReport ? () => setReportImportOpen(true) : undefined} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
+              {isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onAddAttachment={() => setAttachmentUploadOpen(true)} onImport={() => setReportImportOpen(true)} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
               {isCat && tab === '提醒' && <TabReminders items={data.reminders.filter(r => !r.done)} onAdd={() => openCreate('reminder')} onEdit={(item) => editItem('reminder', item)} onDone={completeReminder} onSkip={skipReminder} onDelete={deleteReminder} />}
             </>
           )}

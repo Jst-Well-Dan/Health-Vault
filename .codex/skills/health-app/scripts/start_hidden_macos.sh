@@ -10,9 +10,13 @@ if [[ -z "${PYTHON_BIN}" ]]; then
   echo "未找到 python3.12，请先安装 Python 3.12。" >&2
   exit 1
 fi
+if [[ -z "${HEALTH_APP_PASSWORD:-}" ]]; then
+  echo "请先设置 HEALTH_APP_PASSWORD（家庭共享密码）。" >&2
+  exit 1
+fi
 
 mkdir -p "$(dirname "${LOG_PATH}")"
-cd "${PROJECT_ROOT}/backend"
-nohup "${PYTHON_BIN}" -m uvicorn main:app --host 0.0.0.0 --port 8000 >"${LOG_PATH}" 2>&1 &
+cd "${PROJECT_ROOT}"
+HEALTH_HOST=0.0.0.0 nohup npm run start >"${LOG_PATH}" 2>&1 &
 echo "已在后台启动，PID: $!"
 echo "日志: ${LOG_PATH}"
