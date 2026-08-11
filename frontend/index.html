@@ -28,6 +28,7 @@
   <script type="text/babel" src="components/member_editor.jsx?v=20260803-member-avatar"></script>
   <script type="text/babel" src="components/backup_panel.jsx?v=20260803-backups"></script>
   <script type="text/babel" src="components/settings_panel.jsx?v=20260807-app-settings"></script>
+  <script type="text/babel" src="components/remote_access_panel.jsx?v=20260807-remote-access"></script>
   <script type="text/babel" src="components/screen_family.jsx?v=20260803-member-management"></script>
   <script type="text/babel" src="components/report_import.jsx?v=20260807-report-import-form"></script>
   <script type="text/babel" src="components/attachment_upload.jsx?v=20260803-attachment-upload"></script>
@@ -64,9 +65,10 @@
       const [error, setError] = React.useState('');
       const [memberEditor, setMemberEditor] = React.useState(null);
       const [backupOpen, setBackupOpen] = React.useState(false);
+      const [remoteAccessOpen, setRemoteAccessOpen] = React.useState(false);
       const [settingsOpen, setSettingsOpen] = React.useState(false);
       const [agentSettingsAction, setAgentSettingsAction] = React.useState(null);
-      const [meta, setMeta] = React.useState({ mock_mode: false });
+      const [meta, setMeta] = React.useState(null);
 
       React.useEffect(() => {
         document.documentElement.dataset.density = density;
@@ -144,7 +146,7 @@
               <div className="sub">Family Health Archive</div>
             </div>
             <div className="meta">
-              {meta.mock_mode && <span className="mode-badge">模拟模式</span>}
+              {meta?.mock_mode && <span className="mode-badge">模拟模式</span>}
               <Btn ghost onClick={() => setSettingsOpen(true)}>设置</Btn>
             </div>
           </div>
@@ -220,10 +222,12 @@
             onSelect={(section) => {
               setSettingsOpen(false);
               if (section === 'backup') setBackupOpen(true);
+              else if (section === 'remote') setRemoteAccessOpen(true);
               else setAgentSettingsAction({ section, requestedAt: Date.now() });
             }}
           />}
           {backupOpen && <BackupPanel onClose={() => setBackupOpen(false)} />}
+          {remoteAccessOpen && <RemoteAccessPanel onClose={() => setRemoteAccessOpen(false)} />}
           {memberEditor && <MemberEditorModal
             mode={memberEditor.mode}
             kind={memberEditor.kind}
@@ -231,11 +235,11 @@
             onClose={() => setMemberEditor(null)}
             onSaved={handleMemberSaved}
           />}
-          <AgentPanel
+          {meta && <AgentPanel
             onDataChanged={loadShellData}
             settingsAction={agentSettingsAction}
             onSettingsActionHandled={() => setAgentSettingsAction(null)}
-          />
+          />}
         </div>
       );
     }

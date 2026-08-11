@@ -1,0 +1,111 @@
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "backend"))
+
+
+class SystemSettingsTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        os.environ["HEALTH_VAULT_HOME"] = self.temp.name
+        os.environ["HEALTH_DB_PATH"] = str(Path(self.temp.name) / "health.db")
+        os.environ["HEALTH_APP_PASSWORD"] = "test-family-password"
+        os.environ["HEALTH_DISABLE_AGENT_RUNTIME"] = "1"
+        import database
+        database.BASE_DIR = Path(self.temp.name)
+        database.DB_PATH = Path(self.temp.name) / "health.db"
+        from services import system_settings
+        system_settings.invalidate_cache()
+        from main import app
+        self.app = app
+
+    def tearDown(self):
+        for key in ("HEALTH_VAULT_HOME", "HEALTH_DB_PATH", "HEALTH_APP_PASSWORD", "HEALTH_DISABLE_AGENT_RUNTIME", "HEALTH_HOST"):
+            os.environ.pop(key, None)
+        self.temp.cleanup()
+
+    def test_password_change_rotates_sessions_and_layers_over_env(self):
+        with TestClient(self.app) as client:
+            login = client.post("/api/auth/login", json={"password": "test-family-password"})
+            self.assertEqual(login.status_code, 200)
+            self.assertEqual(client.get("/api/meta").status_code, 200)
+
+            change = client.post("/api/settings/password", json={
+                "current_password": "test-family-password",
+                "new_password": "a",
+            })
+            self.assertEqual(change.status_code, 200)
+            self.assertIsNotNone(change.json().get("warning"))  # env var still set, so file password not yet active
+
+            # Session key was rotated: the cookie issued before the change is now invalid,
+            # even though the env var still controls the active password.
+            self.assertEqual(client.get("/api/meta").status_code, 401)
+            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
+
+            # Once the env var is out of the picture, the file-based password takes over.
+            os.environ.pop("HEALTH_APP_PASSWORD")
+            client.post("/api/auth/logout")
+            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 401)
+            self.assertEqual(client.post("/api/auth/login", json={"password": "a"}).status_code, 200)
+
+    def test_resolved_host_prefers_env_over_file(self):
+        from services import system_settings
+        system_settings.save_settings({"host": "0.0.0.0"})
+        self.assertEqual(system_settings.resolved_host(), "0.0.0.0")
+        os.environ["HEALTH_HOST"] = "127.0.0.1"
+        self.assertEqual(system_settings.resolved_host(), "127.0.0.1")
+
+    def test_detect_tailscale_missing_binary(self):
+        from services import system_settings
+        with patch("shutil.which", return_value=None), patch("platform.system", return_value="Linux"):
+            result = system_settings.detect_tailscale()
+        self.assertEqual(result, {"installed": False, "connected": False, "ip": None})
+        with patch("services.system_settings.detect_tailscale", return_value={"installed": True, "connected": True, "ip": "100.90.80.70"}):
+            self.assertEqual(system_settings.tailscale_bind_host(), "100.90.80.70")
+        with patch("services.system_settings.detect_tailscale", return_value={"installed": True, "connected": False, "ip": None}):
+            self.assertIsNone(system_settings.tailscale_bind_host())
+
+    def test_remote_access_requires_an_active_tailscale_ip(self):
+        from services import system_settings
+        with TestClient(self.app) as client:
+            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
+            with patch("services.system_settings.tailscale_bind_host", return_value="100.90.80.70"):
+                enabled = client.post("/api/settings/host", json={"enable_remote": True})
+            self.assertEqual(enabled.status_code, 200)
+            self.assertEqual(enabled.json()["host"], "100.90.80.70")
+            self.assertEqual(system_settings.load_settings()["host"], "100.90.80.70")
+            with patch("services.system_settings.tailscale_bind_host", return_value=None):
+                refused = client.post("/api/settings/host", json={"enable_remote": True})
+            self.assertEqual(refused.status_code, 409)
+
+    def test_windows_autostart_script_allows_empty_standard_output(self):
+        from services import system_settings
+        completed = subprocess.CompletedProcess(["powershell"], 0, stdout=None, stderr=None)
+        script = system_settings._WINDOWS_SCRIPTS_DIR / "remove-autostart.ps1"
+        self.assertTrue(script.is_file())
+        with patch("services.system_settings.subprocess.run", return_value=completed):
+            self.assertEqual(system_settings._run_script(script), {"ok": True, "message": ""})
+
+    def test_autostart_script_resources_exist(self):
+        from services import system_settings
+        for script in (
+            system_settings._WINDOWS_SCRIPTS_DIR / "setup-autostart.ps1",
+            system_settings._WINDOWS_SCRIPTS_DIR / "start-hidden.ps1",
+            system_settings._WINDOWS_SCRIPTS_DIR / "remove-autostart.ps1",
+            system_settings._MACOS_SCRIPTS_DIR / "setup-autostart.sh",
+            system_settings._MACOS_SCRIPTS_DIR / "start-launchagent.sh",
+            system_settings._MACOS_SCRIPTS_DIR / "remove-autostart.sh",
+        ):
+            self.assertTrue(script.is_file(), script)
+
+
+if __name__ == "__main__":
+    unittest.main()

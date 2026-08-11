@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 import database  # noqa: E402
 from database import get_conn, init_db  # noqa: E402
 from models import AttachmentRecordCreate, LabRecordCreate, VisitCreate, VisitUpdate  # noqa: E402
-from routers.agent import ChangeCreate, get_record, log_change, undo_last_change  # noqa: E402
+from routers.agent import ChangeCreate, MessageCreate, clear_messages, create_message, get_record, list_messages, log_change, undo_last_change  # noqa: E402
 from routers.attachments import create_attachment  # noqa: E402
 from routers.labs import create_lab  # noqa: E402
 from routers.visits import create_visit, update_visit  # noqa: E402
@@ -48,6 +48,16 @@ class AgentWriteFlowTest(unittest.TestCase):
             member_key="self", visit_id=visit["id"], date="2026-08-03", title="体检报告",
         ))
         self.assertEqual(attachment["visit_id"], visit["id"])
+
+    def test_clear_messages_only_affects_target_session(self):
+        create_message(MessageCreate(session_id="default", role="user", content="爸爸最近在吃什么药？"))
+        create_message(MessageCreate(session_id="default", role="assistant", content="正在查询…"))
+        create_message(MessageCreate(session_id="other", role="user", content="不应被清空"))
+
+        clear_messages("default")
+
+        self.assertEqual(list_messages("default"), [])
+        self.assertEqual(len(list_messages("other")), 1)
 
 
 if __name__ == "__main__":

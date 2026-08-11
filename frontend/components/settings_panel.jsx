@@ -6,6 +6,11 @@ function SettingsPanel({ onClose, onSelect, agentAvailable = false }) {
       description: '创建、校验和恢复本地健康档案数据库备份。',
     },
     {
+      key: 'remote',
+      label: '远程访问 (Tailscale)',
+      description: '检测 Tailscale、配置手机访问、修改密码、设置开机自启。',
+    },
+    {
       key: 'ai',
       label: 'AI 配置',
       description: '选择健康助手使用的模型，并管理登录方式。',
@@ -25,7 +30,7 @@ function SettingsPanel({ onClose, onSelect, agentAvailable = false }) {
 
         <div className="app-settings-panel__list">
           {items.map(item => {
-            const unavailable = item.key !== 'backup' && !agentAvailable;
+            const unavailable = item.key !== 'backup' && item.key !== 'remote' && !agentAvailable;
             return (
               <button
                 key={item.key}

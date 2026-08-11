@@ -72,6 +72,7 @@ async function handler(request: IncomingMessage, response: ServerResponse) {
     let value: unknown;
     if (request.method === "POST" && url.pathname === "/agent/send") value = await agent.send(String(body.message || ""));
     else if (request.method === "POST" && url.pathname === "/agent/stop") value = agent.stop();
+    else if (request.method === "POST" && url.pathname === "/agent/reset") value = await agent.resetContext();
     else if (request.method === "GET" && url.pathname === "/agent/history") value = await agent.history();
     else if (request.method === "GET" && url.pathname === "/agent/settings") value = await agent.getSettings(url.searchParams.get("provider") || undefined);
     else if (request.method === "POST" && url.pathname === "/agent/settings") value = await agent.saveSettings(body as { provider: string; model: string });

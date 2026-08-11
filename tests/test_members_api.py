@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 import database  # noqa: E402
 from database import get_conn, init_db  # noqa: E402
 from models import MemberCreate, MemberUpdate  # noqa: E402
-from routers.members import create_member, list_members, update_member  # noqa: E402
+from routers.members import create_member, get_member, list_members, update_member  # noqa: E402
 
 
 class MembersApiTest(unittest.TestCase):
@@ -41,6 +41,24 @@ class MembersApiTest(unittest.TestCase):
         self.assertEqual(member["species_detail"], "兔")
         self.assertEqual(member["sex"], "妹妹")
         self.assertNotIn("chip_id", member)
+
+    def test_member_avatar_is_served_from_private_avatar_directory(self):
+        create_member(MemberCreate(key="avatar-user", name="头像用户", species="human"))
+        avatar_dir = database.DB_PATH.parent / "avatars"
+        avatar_dir.mkdir()
+        (avatar_dir / "avatar-user.png").write_bytes(b"avatar")
+
+        member = get_member("avatar-user")
+        self.assertTrue(member["avatar_url"].startswith("/api/members/avatar-user/avatar?v="))
+
+    def test_legacy_public_avatar_remains_available_through_authenticated_api(self):
+        create_member(MemberCreate(key="legacy-user", name="旧头像用户", species="human"))
+        legacy_dir = database.DB_PATH.parent / "public"
+        legacy_dir.mkdir()
+        (legacy_dir / "legacy-user.png").write_bytes(b"legacy avatar")
+
+        member = get_member("legacy-user")
+        self.assertTrue(member["avatar_url"].startswith("/api/members/legacy-user/avatar?v="))
 
     def test_duplicate_explicit_key_returns_409(self):
         create_member(MemberCreate(key="safe-key_1", name="小白", species="cat"))

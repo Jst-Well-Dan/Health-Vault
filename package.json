@@ -3,11 +3,15 @@
   "version": "2.0.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.19.0",
+    "python": ">=3.10"
+  },
   "scripts": {
     "check": "tsc --noEmit",
     "compile": "tsc",
-    "start": "npm run compile && python backend/run_backend.py",
-    "test": "python -m unittest discover -s tests -v && npm run check",
+    "start": "npm run compile && node scripts/run-python.mjs backend/run_backend.py",
+    "test": "node scripts/run-python.mjs -m unittest discover -s tests -v && npm run check",
     "smoke": "npm run compile && node tests/web-smoke.mjs"
   },
   "dependencies": {

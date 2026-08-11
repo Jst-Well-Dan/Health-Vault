@@ -15,48 +15,45 @@ from routers.common import json_dumps, json_loads, require_row
 
 
 router = APIRouter(tags=["members"])
-PUBLIC_DIR = Path(os.getenv("HEALTH_PUBLIC_DIR", Path(__file__).resolve().parents[2] / "data" / "public"))
 AVATAR_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
 SAFE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 ALLOWED_SPECIES = {"human", "cat", "dog", "other"}
 
 
-def _public_url(path: Path) -> str:
-    rel = path.relative_to(PUBLIC_DIR).as_posix()
-    return "/public/" + quote(rel)
-
-
 def _avatar_storage_dir() -> Path:
     return database.DB_PATH.parent.resolve() / "avatars"
+
+
+def _legacy_avatar_storage_dir() -> Path:
+    """Read-only compatibility location used before avatars moved beside the database."""
+    configured = os.getenv("HEALTH_PUBLIC_DIR")
+    return Path(configured).resolve() if configured else database.DB_PATH.parent.resolve() / "public"
+
+
+def _find_avatar_in(directory: Path, key: str) -> Path | None:
+    for suffix in AVATAR_EXTS:
+        path = directory / f"{key}{suffix}"
+        if path.is_file():
+            return path
+    return None
 
 
 def _find_avatar_file(member_key: str) -> Path | None:
     key = str(member_key or "").strip().lower()
     if not key:
         return None
-    for suffix in AVATAR_EXTS:
-        path = _avatar_storage_dir() / f"{key}{suffix}"
-        if path.is_file():
-            return path
-    return None
+    return _find_avatar_in(_avatar_storage_dir(), key) or _find_avatar_in(_legacy_avatar_storage_dir(), key)
 
 
 def _find_avatar_url(member_key: str) -> str | None:
     key = str(member_key or "").strip().lower()
     if not key:
         return None
-
-    uploaded = _find_avatar_file(key)
-    if uploaded:
-        return f"/api/members/{quote(key)}/avatar?v={uploaded.stat().st_mtime_ns}"
-
-    if not PUBLIC_DIR.exists():
+    avatar = _find_avatar_file(key)
+    if not avatar:
         return None
-    for path in sorted(PUBLIC_DIR.rglob("*")):
-        if path.is_file() and path.suffix.lower() in AVATAR_EXTS and path.stem.lower() == key:
-            return _public_url(path)
-    return None
+    return f"/api/members/{quote(key)}/avatar?v={avatar.stat().st_mtime_ns}"
 
 
 def _member_dict(row: Any) -> dict[str, Any]:

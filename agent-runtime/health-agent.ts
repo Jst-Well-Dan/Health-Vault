@@ -127,7 +127,6 @@ export class HealthAgent {
 
   async init() {
     await this.credentials.load();
-    await this.syncPiCliCredentials();
     await this.models.refresh({ allowNetwork: false });
     this.piDefault = await this.loadPiDefault();
     let desktopSettings: Settings | undefined;
@@ -142,16 +141,6 @@ export class HealthAgent {
     await this.openSession();
     this.createAgent();
     this.initialized = true;
-  }
-
-  private async syncPiCliCredentials() {
-    try {
-      const raw = await readFile(join(homedir(), ".pi", "agent", "auth.json"), "utf8");
-      const entries = JSON.parse(raw) as Record<string, Credential>;
-      for (const [providerId, credential] of Object.entries(entries)) {
-        await this.credentials.modify(providerId, async () => credential);
-      }
-    } catch {}
   }
 
   private async loadPiDefault(): Promise<Pick<Settings, "provider" | "model"> | undefined> {
@@ -268,19 +257,30 @@ export class HealthAgent {
     if (callback) { this.responses.delete(id); callback(value); }
   }
 
-  private async openSession() {
+  private async openSession(fresh = false) {
     const userDataPath = dirname(this.settingsPath);
     const sessionPath = join(userDataPath, "sessions", "default.jsonl");
     this.sessionEnv = new NodeExecutionEnv({ cwd: userDataPath });
     const exists = await this.sessionEnv.exists(sessionPath);
     if (!exists.ok) throw exists.error;
-    const storage = exists.value
+    const storage = !fresh && exists.value
       ? await JsonlSessionStorage.open(this.sessionEnv, sessionPath)
       : await JsonlSessionStorage.create(this.sessionEnv, sessionPath, {
         cwd: userDataPath,
         sessionId: "default",
       });
     this.session = new Session(storage);
+  }
+
+  async resetContext() {
+    this.responseText = "";
+    this.pending.clear();
+    this.agent?.abort();
+    await this.api("/api/agent/messages", { method: "DELETE" });
+    await this.openSession(true);
+    this.createAgent();
+    this.emit({ type: "reset" });
+    return { ok: true };
   }
 
   private createAgent() {

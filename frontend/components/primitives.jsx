@@ -35,11 +35,7 @@ const Chip = ({ children, variant, style }) => (
 
 const Stamp = ({ children }) => <span className="stamp">{children}</span>;
 
-const memberAvatarSrc = (member) => {
-  if (member?.avatar_url) return member.avatar_url;
-  const filename = member?.avatar || member?.photo || member?.key || member?.name;
-  return filename ? `/public/${encodeURIComponent(filename)}.png` : '';
-};
+const memberAvatarSrc = (member) => member?.avatar_url || '';
 
 const Avatar = ({ label, size = 'md', ring = false, cat = false, src = '', alt = '', style }) => {
   const [failedSrc, setFailedSrc] = React.useState('');

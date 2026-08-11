@@ -30,6 +30,19 @@ def _default_db_path() -> Path:
 
 
 DB_PATH = Path(os.getenv("HEALTH_DB_PATH", _default_db_path())).resolve()
+SCHEMA_VERSION = 1
+
+
+def database_needs_migration() -> bool:
+    """Whether an existing database needs a schema upgrade backup before startup."""
+    if not DB_PATH.is_file():
+        return False
+    try:
+        with sqlite3.connect(f"file:{DB_PATH.as_posix()}?mode=ro", uri=True) as conn:
+            return int(conn.execute("PRAGMA user_version").fetchone()[0]) < SCHEMA_VERSION
+    except sqlite3.Error:
+        # init_db will surface a more useful error for an unreadable database.
+        return False
 
 
 def _compact_sql(sql: str) -> str:
@@ -346,3 +359,4 @@ def init_db() -> None:
               WHERE auto_key IS NOT NULL
             """
         )
+        conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

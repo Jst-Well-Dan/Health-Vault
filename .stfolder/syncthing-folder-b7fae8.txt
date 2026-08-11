@@ -1,5 +1,0 @@
-# This directory is a Syncthing folder marker.
-# Do not delete.
-
-folderID: pyetn-9z52q
-created: 2026-05-15T11:59:09+08:00

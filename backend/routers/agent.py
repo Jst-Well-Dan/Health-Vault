@@ -154,3 +154,10 @@ def create_message(payload: MessageCreate) -> dict:
             (payload.session_id, payload.role, content),
         )
         return row_to_dict(conn.execute("SELECT * FROM agent_messages WHERE id = ?", (cur.lastrowid,)).fetchone())
+
+
+@router.delete("/agent/messages")
+def clear_messages(session_id: str = "default") -> dict:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM agent_messages WHERE session_id = ?", (session_id,))
+    return {"ok": True}

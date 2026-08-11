@@ -11,21 +11,8 @@ venv.bak/
 .venv/
 .build-venv/
 
-# SQLite
-data/*.db
-data/*.db-shm
-data/*.db-wal
-data/**/*.db
-data/**/*.db-shm
-data/**/*.db-wal
-data/backups/
-data/log/
-data/agent-runtime-secret.bin
-data/session-key.bin
-data/agent-key.bin
-data/agent-credentials.json
-data/agent-settings.json
-data/sessions/
+# Private runtime data — never commit health records, reports, attachments, backups, credentials, or user avatars.
+data/
 
 # Frontend
 node_modules/
@@ -34,36 +21,31 @@ dist-electron/
 dist-server/
 build/
 
-# IDEs and local agent artifacts
+# IDEs, local configuration, logs and agent artifacts
 .vscode/
 .idea/
 .DS_Store
 .pi-subagents/
+.env
+.env.*
+!.env.example
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.sync-conflict-*
 
 # Docs
 docs/*
 !docs/electron-agent-development-guide.md
-!docs/static-preview/
-!docs/static-preview/**
+!docs/SETUP.md
+!docs/images/
+!docs/images/*.png
+!docs/examples/
+!docs/examples/**
 todo.md
 data_incoming/
 
 # 个人健康数据（开源时不提交）
-data/reports/
-data/imports/
-!data/imports/
-data/imports/*
-!data/imports/templates/
-!data/imports/templates/visit_import.example.json
-data/mock/
-data/public/*
-!data/public/README.md
-!data/public/demo-*.png
-!data/public/demo-*.jpg
-!data/public/demo-*.jpeg
-!data/public/demo-*.webp
-!data/public/screenshots/
-!data/public/screenshots/**
 报告pdf/
 报告md/
 文案.md

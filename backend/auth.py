@@ -12,6 +12,8 @@ from pathlib import Path
 
 from fastapi import HTTPException, Request
 
+from services import system_settings
+
 COOKIE_NAME = "health_vault_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
 MAX_LOGIN_ATTEMPTS = 5
@@ -55,8 +57,24 @@ def configured_password() -> str | None:
     return value if value else None
 
 
+def _stored_password_hash() -> str | None:
+    value = system_settings.load_settings().get("password_hash")
+    return value if value else None
+
+
 def password_is_configured() -> bool:
-    return configured_password() is not None
+    return configured_password() is not None or _stored_password_hash() is not None
+
+
+def rotate_session_key() -> None:
+    key = secrets.token_bytes(32)
+    path = _key_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(key)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def _encode(payload: dict) -> str:
@@ -98,8 +116,15 @@ def verify_password(password: str, client_host: str) -> bool:
     attempts = _attempts[client_host]
     while attempts and now - attempts[0] > LOGIN_WINDOW_SECONDS:
         attempts.popleft()
+
     expected = configured_password()
-    if not expected or not hmac.compare_digest(password.encode(), expected.encode()):
+    if expected is not None:
+        ok = hmac.compare_digest(password.encode(), expected.encode())
+    else:
+        stored_hash = _stored_password_hash()
+        ok = stored_hash is not None and system_settings.verify_password_hash(password, stored_hash)
+
+    if not ok:
         attempts.append(now)
         if len(attempts) >= MAX_LOGIN_ATTEMPTS:
             _locked_until[client_host] = now + LOCKOUT_SECONDS

@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
+import fitz  # noqa: E402
 import database  # noqa: E402
 from database import get_conn, init_db  # noqa: E402
 from routers.imports import ReportImportCommit, ReportLab, ReportVisit, commit_report, dry_run_report, stage_report  # noqa: E402
@@ -24,11 +25,14 @@ class ReportImportFlowTest(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_existing_one_page_pdf_is_staged_archived_and_imported(self):
-        source = ROOT / "data" / "reports" / "yanghua" / "pdf" / "20260616_首都医科大学附属北京安贞医院_甲状腺及颈部淋巴结超声_杨桦.pdf"
-        self.assertTrue(source.is_file(), "测试样本不存在")
+    def test_synthetic_one_page_pdf_is_staged_archived_and_imported(self):
+        document = fitz.open()
+        page = document.new_page()
+        page.insert_text((72, 72), "Synthetic report fixture: no personal health data.")
+        content = document.tobytes()
+        document.close()
 
-        staged = stage_report(source.name, source.read_bytes(), "application/pdf")
+        staged = stage_report("synthetic-report.pdf", content, "application/pdf")
         self.assertEqual(staged["page_count"], 1)
         self.assertEqual(len(staged["images"]), 1)
         self.assertEqual(staged["images"][0]["mime_type"], "image/png")

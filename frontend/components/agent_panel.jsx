@@ -57,6 +57,13 @@ function AgentPanel({ onDataChanged, settingsAction, onSettingsActionHandled }) 
     if (event.type === 'auth') { const item = event.event; setNotice(item.message || item.instructions || (item.url ? `请在浏览器打开：${item.url}` : '正在登录…')); if (item.url) window.open(item.url, '_blank'); }
     if (event.type === 'data-changed') onDataChanged?.();
     if (event.type === 'notice' || event.type === 'fatal') setNotice(event.text);
+    if (event.type === 'reset') { setMessages([]); setBusy(false); setRequest(null); setNotice('对话已重置，健康助手不再记得之前的对话内容。'); }
+  };
+
+  const resetContext = async () => {
+    if (!window.confirm('清空当前对话并重置健康助手的上下文记忆？\n\n已经写入的健康数据不会受影响，只是对话历史会被清空。')) return;
+    try { await agentRequest('/agent/reset', { method: 'POST' }); }
+    catch (err) { setNotice(err.message || String(err)); }
   };
 
   const respond = (id, value) => agentRequest('/agent/respond', { method: 'POST', body: JSON.stringify({ id, value }) });
@@ -86,7 +93,7 @@ function AgentPanel({ onDataChanged, settingsAction, onSettingsActionHandled }) 
   return <>
     <button className={`agent-fab ${open ? 'panel-open' : ''}`} onClick={() => setOpen(value => !value)} aria-label="打开健康助手">✦</button>
     <aside className={`agent-panel ${open ? 'open' : ''}`} aria-hidden={!open}>
-      <header><div><b>健康档案助手</b><small>只使用受限健康数据工具</small></div><div><button onClick={() => setOpen(false)}>×</button></div></header>
+      <header><div><b>健康档案助手</b></div><div><button onClick={resetContext} title="重置对话上下文">重置</button><button onClick={() => setOpen(false)}>×</button></div></header>
       <div className="agent-messages">{!messages.length && <div className="agent-empty">可以问：“爸爸最近在吃什么药？”<br/>写入前会展示实际字段并等待你确认。</div>}{messages.map((message, index) => <div key={message.id || index} className={`agent-message ${message.role}`}>{message.content}</div>)}<div ref={endRef} /></div>
       {notice && <div className="agent-notice">{notice}</div>}
       <div className="agent-compose"><textarea value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} placeholder="询问或整理健康档案…" /><button onClick={busy ? () => agentRequest('/agent/stop', { method: 'POST' }) : send}>{busy ? '停止' : '发送'}</button></div>

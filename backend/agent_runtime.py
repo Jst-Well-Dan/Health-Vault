@@ -1,6 +1,7 @@
 """Launch and proxy the loopback-only Node health-agent runtime."""
 
 import atexit
+import asyncio
 import hashlib
 import hmac
 import json
@@ -124,18 +125,37 @@ def _request(path: str, method: str, body: bytes = b"", content_type: str | None
     return urllib.request.Request(_url(path), data=body if method != "GET" else None, headers=headers, method=method)
 
 
+def _proxy_request(path: str, method: str, body: bytes, content_type: str | None) -> Response:
+    """Perform blocking loopback I/O outside FastAPI's event-loop thread."""
+    try:
+        with urllib.request.urlopen(_request(path, method, body, content_type), timeout=60) as upstream:
+            return Response(content=upstream.read(), status_code=upstream.status, media_type=upstream.headers.get_content_type())
+    except urllib.error.HTTPError as error:
+        return Response(content=error.read(), status_code=error.code, media_type=error.headers.get_content_type())
+    except TimeoutError as error:
+        raise HTTPException(status_code=504, detail="健康助手服务响应超时") from error
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, TimeoutError):
+            raise HTTPException(status_code=504, detail="健康助手服务响应超时") from error
+        raise HTTPException(status_code=503, detail=f"健康助手服务不可用：{error}") from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=f"健康助手服务不可用：{error}") from error
+
+
 async def proxy_agent_request(path: str, request: Request) -> Response:
     if not _process or _process.poll() is not None:
         raise HTTPException(status_code=503, detail="健康助手服务不可用")
     body = await request.body()
     query = f"?{request.url.query}" if request.url.query else ""
-    try:
-        with urllib.request.urlopen(_request(f"/{path}{query}", request.method, body, request.headers.get("content-type")), timeout=60) as upstream:
-            return Response(content=upstream.read(), status_code=upstream.status, media_type=upstream.headers.get_content_type())
-    except urllib.error.HTTPError as error:
-        return Response(content=error.read(), status_code=error.code, media_type=error.headers.get_content_type())
-    except (urllib.error.URLError, RuntimeError) as error:
-        raise HTTPException(status_code=503, detail=f"健康助手服务不可用：{error}") from error
+    # The Agent calls back into FastAPI while handling some requests.  Running
+    # urllib synchronously here would prevent that callback from being served.
+    return await asyncio.to_thread(
+        _proxy_request,
+        f"/{path}{query}",
+        request.method,
+        body,
+        request.headers.get("content-type"),
+    )
 
 
 def proxy_agent_stream(request: Request) -> StreamingResponse:
