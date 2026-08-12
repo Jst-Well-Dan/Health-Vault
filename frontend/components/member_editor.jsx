@@ -33,6 +33,22 @@ const memberAvatarUpload = async (key, file) => {
   return data;
 };
 
+const memberAvatarApplyPreset = async (key, name) => {
+  const path = `/api/members/${encodeURIComponent(key)}/avatar/preset`;
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  let data = null;
+  try { data = await res.json(); } catch (_) { data = null; }
+  if (!res.ok) {
+    const detail = data?.detail || `${path} · ${res.status}`;
+    throw new Error(Array.isArray(detail) ? detail.map(d => d.msg || JSON.stringify(d)).join('；') : detail);
+  }
+  return data;
+};
+
 const arrayToText = (value) => Array.isArray(value) ? value.join('\n') : '';
 const textToArray = (value) => String(value || '')
   .split(/[\n,，]/)
@@ -85,6 +101,11 @@ function MemberEditorModal({ mode = 'create', kind = 'human', member = null, onC
   const [error, setError] = React.useState('');
   const [avatarFile, setAvatarFile] = React.useState(null);
   const [avatarPreview, setAvatarPreview] = React.useState('');
+  const [presetOpen, setPresetOpen] = React.useState(false);
+  const [presets, setPresets] = React.useState(null);
+  const [presetLoading, setPresetLoading] = React.useState(false);
+  const [presetError, setPresetError] = React.useState('');
+  const [presetAvatarUrl, setPresetAvatarUrl] = React.useState('');
   const isPetForm = form.species !== 'human';
   const archived = Boolean(member?.archived_at);
 
@@ -119,8 +140,41 @@ function MemberEditorModal({ mode = 'create', kind = 'human', member = null, onC
       return;
     }
     setError('');
+    setPresetAvatarUrl('');
     setAvatarFile(file);
     setAvatarPreview(URL.createObjectURL(file));
+  };
+  const openPresets = async () => {
+    setPresetError('');
+    setPresetOpen(true);
+    if (presets !== null) return;
+    setPresetLoading(true);
+    try {
+      const res = await fetch('/api/avatars/presets');
+      let data = null;
+      try { data = await res.json(); } catch (_) { data = null; }
+      if (!res.ok) throw new Error(data?.detail || `/api/avatars/presets · ${res.status}`);
+      setPresets(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setPresetError(err.message || '加载预设头像失败');
+    } finally {
+      setPresetLoading(false);
+    }
+  };
+  const applyPreset = async (item) => {
+    setSaving(true);
+    setPresetError('');
+    try {
+      const saved = await memberAvatarApplyPreset(member.key, item.name);
+      setPresetAvatarUrl(saved?.avatar_url || '');
+      setAvatarFile(null);
+      setAvatarPreview('');
+      setPresetOpen(false);
+    } catch (err) {
+      setPresetError(err.message || '应用预设头像失败');
+    } finally {
+      setSaving(false);
+    }
   };
   const switchKind = (nextKind) => setForm(prev => ({ ...prev, species: nextKind === 'pet' ? (prev.species === 'human' ? 'cat' : prev.species || 'cat') : 'human' }));
 
@@ -221,14 +275,24 @@ function MemberEditorModal({ mode = 'create', kind = 'human', member = null, onC
         {error && <div className="sketch" style={{ padding: 10, marginBottom: 12, color: 'var(--danger)' }}>{error}</div>}
 
         {isEdit && (
-          <div className="sketch" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: 12, marginBottom: 12 }}>
+          <div className="sketch" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: 12, marginBottom: 12, flexWrap: 'wrap' }}>
             <Avatar
               label={(member?.name || '?').slice(0, 1)}
               size="lg"
-              src={avatarPreview || member?.avatar_url || ''}
+              src={avatarPreview || presetAvatarUrl || member?.avatar_url || ''}
               alt={`${member?.name || '成员'}头像`}
             />
-            <label style={{ flex: 1 }}><span>头像</span><input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={selectAvatar} disabled={saving} /></label>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 8, minWidth: 200 }}>
+              <label><span>头像</span><input type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={selectAvatar} disabled={saving} /></label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <Btn ghost disabled={saving} onClick={openPresets}>从预设库选择</Btn>
+                {avatarFile
+                  ? <span className="scribble" style={{ fontSize: 12, color: 'var(--ink-soft)' }}>已选择图片，保存后生效</span>
+                  : presetAvatarUrl
+                    ? <span className="scribble" style={{ fontSize: 12, color: 'var(--ink-soft)' }}>预设头像已应用</span>
+                    : null}
+              </div>
+            </div>
           </div>
         )}
 
@@ -257,6 +321,42 @@ function MemberEditorModal({ mode = 'create', kind = 'human', member = null, onC
           {!isPetForm && <label style={{ gridColumn: '1 / -1' }}><span>慢病/长期关注（每行或逗号分隔）</span><textarea rows="3" value={form.chronic} onChange={e => setField('chronic', e.target.value)} /></label>}
           <label style={{ gridColumn: '1 / -1' }}><span>备注</span><textarea rows="4" value={form.notes} onChange={e => setField('notes', e.target.value)} /></label>
         </div>
+
+        {presetOpen && (
+          <div className="modal-backdrop" style={{ zIndex: 300 }} onClick={() => !saving && setPresetOpen(false)}>
+            <div className="daily-modal sketch shadow" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline', marginBottom: 12 }}>
+                <div>
+                  <div className="sec-label">头像预设库</div>
+                  <div style={{ fontFamily: 'Caveat, cursive', fontSize: 28, fontWeight: 700, lineHeight: 1 }}>选一张当作头像</div>
+                </div>
+                <Btn ghost disabled={saving} onClick={() => setPresetOpen(false)}>关闭</Btn>
+              </div>
+              {presetError && <div className="sketch" style={{ padding: 10, marginBottom: 12, color: 'var(--danger)' }}>{presetError}</div>}
+              {presetLoading ? (
+                <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-soft)' }}>加载中…</div>
+              ) : presets && presets.length === 0 ? (
+                <div style={{ padding: 24, textAlign: 'center', color: 'var(--ink-soft)' }}>暂无预设头像，可改用上方「头像」上传图片。</div>
+              ) : presets ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(84px, 1fr))', gap: 10, maxHeight: 420, overflowY: 'auto', padding: 4 }}>
+                  {presets.map(item => (
+                    <button
+                      key={item.name}
+                      type="button"
+                      disabled={saving}
+                      onClick={() => applyPreset(item)}
+                      title={item.name}
+                      style={{ border: '2px dashed var(--line)', borderRadius: 12, background: 'transparent', padding: 6, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}
+                    >
+                      <img src={item.url} alt={item.name} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 10, display: 'block' }} />
+                      <span style={{ fontSize: 11, color: 'var(--ink-soft)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{item.name.replace(/\.(webp|png|jpe?g|gif)$/i, '')}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        )}
 
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
           <div>{isEdit && <Btn ghost disabled={saving} onClick={toggleArchive}>{archived ? '恢复成员' : '归档成员'}</Btn>}</div>

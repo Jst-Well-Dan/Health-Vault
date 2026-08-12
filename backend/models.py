@@ -34,6 +34,12 @@ class MemberUpdate(MemberBase):
     archived_at: Optional[str] = None
 
 
+class AvatarPresetApply(BaseModel):
+    """从预设头像库复制一张图片作为成员头像。"""
+
+    name: str
+
+
 class MemberOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

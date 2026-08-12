@@ -130,6 +130,90 @@ class BackupsApiTest(unittest.TestCase):
         self.assertTrue((self.db_path.parent / "backups" / pre_restore["filename"]).is_file())
         self.assertTrue(self.db_path.is_file())
 
+    def test_download_backup_returns_backup_file(self):
+        backup = create_backup()
+
+        response = self.client.get(f"/api/backups/download/{backup['filename']}")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.content[:16], b"SQLite format 3\x00")
+        self.assertEqual(response.headers.get("content-type", "").split(";")[0], "application/octet-stream")
+
+    def test_download_rejects_invalid_or_missing_backup(self):
+        backup_dir = self.db_path.parent / "backups"
+        backup_dir.mkdir(parents=True)
+        (backup_dir / "notes.txt").write_bytes(b"x")
+        for filename in ["missing.db", "notes.txt", "x.db"]:
+            with self.subTest(filename=filename):
+                response = self.client.get(f"/api/backups/download/{filename}")
+                self.assertEqual(response.status_code, 400, response.text)
+
+    def _imported_database_bytes(self) -> bytes:
+        imported = Path(self.temp.name) / "imported.db"
+        source = sqlite3.connect(self.db_path)
+        destination = sqlite3.connect(imported)
+        try:
+            source.backup(destination)
+        finally:
+            destination.close()
+            source.close()
+        conn = sqlite3.connect(imported)
+        try:
+            conn.execute("INSERT INTO members (key, name) VALUES ('imported_member', '导入成员')")
+            conn.commit()
+        finally:
+            conn.close()
+        return imported.read_bytes()
+
+    def test_import_switches_database_and_keeps_prerestore(self):
+        content = self._imported_database_bytes()
+
+        response = self.client.post(
+            "/api/backups/import", files={"file": ("imported.db", content, "application/octet-stream")}
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertTrue(body["restart_required"])
+        self.assertEqual(body["imported_filename"], "imported.db")
+        self.assertEqual(body["database_path"], str(self.db_path))
+        pre_restore = body["pre_restore_backup"]
+        self.assertTrue(pre_restore["filename"].startswith("health_prerestore_"))
+        self.assertTrue((self.db_path.parent / "backups" / pre_restore["filename"]).is_file())
+
+        with database.get_conn() as conn:
+            row = conn.execute("SELECT name FROM members WHERE key = 'imported_member'").fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["name"], "导入成员")
+
+    def test_import_rejects_corrupt_empty_and_missing_tables(self):
+        backup_dir = self.db_path.parent / "backups"
+        backup_dir.mkdir(parents=True)
+        only_one_table = Path(self.temp.name) / "partial.db"
+        conn = sqlite3.connect(only_one_table)
+        try:
+            conn.execute("CREATE TABLE members (key TEXT PRIMARY KEY, name TEXT)")
+            conn.commit()
+        finally:
+            conn.close()
+        cases = [
+            ("corrupt.db", b"not a sqlite database", "损坏"),
+            ("notes.txt", b"any content", ".db"),
+            ("empty.db", b"", "为空"),
+            ("partial.db", only_one_table.read_bytes(), "缺少表"),
+        ]
+        for filename, content, message in cases:
+            with self.subTest(filename=filename):
+                response = self.client.post(
+                    "/api/backups/import", files={"file": (filename, content, "application/octet-stream")}
+                )
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertIn(message, response.text)
+        # Failures must not replace the active database.
+        with database.get_conn() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM members").fetchone()[0], 0)
+
     def test_prune_old_backups_uses_active_database_backup_dir_and_dry_run(self):
         backup_dir = self.db_path.parent / "backups"
         backup_dir.mkdir(parents=True)

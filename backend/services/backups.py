@@ -1,10 +1,16 @@
+import os
+import shutil
 import sqlite3
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import database
+from database import init_db
 
+
+MAX_IMPORT_BYTES = 200 * 1024 * 1024
 
 CORE_TABLES = {
     "members",
@@ -141,6 +147,74 @@ def create_database_backup(prefix: str = "health_manual") -> dict[str, Any]:
         "size_bytes": stat.st_size,
         "created_at": created_at.isoformat(timespec="microseconds"),
     }
+
+
+def _checkpoint_active_database() -> None:
+    """Flush and remove WAL/SHM sidecars so the database file can be replaced."""
+    conn = sqlite3.connect(database.DB_PATH)
+    try:
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.Error:
+        pass
+    finally:
+        conn.close()
+    for sidecar in (Path(str(database.DB_PATH) + "-wal"), Path(str(database.DB_PATH) + "-shm")):
+        try:
+            sidecar.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def import_database_backup(content: bytes, original_name: str) -> dict[str, Any]:
+    """Validate an uploaded .db file and switch the active database to it.
+
+    The current database is backed up first; the uploaded file is only
+    installed after full validation. Failures never touch the active database.
+    """
+    if not content:
+        raise ValueError("上传的数据库文件为空")
+    if len(content) > MAX_IMPORT_BYTES:
+        raise ValueError("上传的数据库文件不能超过 200 MB")
+    name = Path(original_name or "imported.db").name.strip()
+    if not name or Path(name).suffix.lower() != ".db":
+        raise ValueError("只能导入 .db 数据库文件")
+
+    with tempfile.NamedTemporaryFile(prefix="health_import_", suffix=".db", delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+    try:
+        # Full validation before touching anything.
+        _validate_sqlite_database(tmp_path)
+        pre_restore = create_database_backup(prefix="health_prerestore")
+        _checkpoint_active_database()
+
+        database.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        staged = database.DB_PATH.with_name(f".health_import_{database.DB_PATH.name}.tmp")
+        shutil.copyfile(tmp_path, staged)
+        try:
+            # os.replace fails with a file lock on Windows even when the
+            # target is not held open; remove + rename avoids that.
+            database.DB_PATH.unlink()
+            os.rename(staged, database.DB_PATH)
+        except OSError:
+            if staged.exists() and not database.DB_PATH.exists():
+                os.rename(staged, database.DB_PATH)
+            raise
+
+        # Apply the same schema migrations a fresh install would, so older
+        # exported databases gain any missing columns/tables.
+        init_db()
+        schema = _validate_sqlite_database(database.DB_PATH)
+        return {
+            "ok": True,
+            "database_path": str(database.DB_PATH),
+            "imported_filename": name,
+            "pre_restore_backup": pre_restore,
+            "schema": schema,
+            "restart_required": True,
+        }
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def prepare_database_restore(filename: str) -> dict[str, Any]:

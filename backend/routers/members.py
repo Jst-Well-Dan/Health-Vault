@@ -10,7 +10,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
 from database import get_conn
-from models import MemberCreate, MemberUpdate
+from models import AvatarPresetApply, MemberCreate, MemberUpdate
 from routers.common import json_dumps, json_loads, require_row
 
 
@@ -54,6 +54,79 @@ def _find_avatar_url(member_key: str) -> str | None:
     if not avatar:
         return None
     return f"/api/members/{quote(key)}/avatar?v={avatar.stat().st_mtime_ns}"
+
+
+def _preset_dir() -> Path:
+    """预设头像库目录：默认 frontend/assets/avatars，可用 HEALTH_AVATARS_DIR 覆盖。
+
+    与 main.py 的前端目录解析保持一致（优先 HEALTH_FRONTEND_DIR，否则按代码位置推导），
+    不跟随 HEALTH_VAULT_HOME——预设属于应用自带资源，不属于私有数据。
+    """
+    configured = os.getenv("HEALTH_AVATARS_DIR")
+    if configured:
+        return Path(configured).resolve()
+    frontend_dir = os.getenv("HEALTH_FRONTEND_DIR")
+    if not frontend_dir:
+        repo_root = Path(__file__).resolve().parents[2]
+        frontend_dir = str(repo_root / "frontend")
+    return (Path(frontend_dir).resolve() / "assets" / "avatars").resolve()
+
+
+def _resolve_preset(name: str) -> Path | None:
+    """解析预设头像文件；拒绝路径穿越、非白名单扩展名或超限文件。"""
+    directory = _preset_dir()
+    try:
+        candidate = (directory / str(name or "")).resolve()
+    except (OSError, ValueError):
+        return None
+    if directory not in [candidate, *candidate.parents]:
+        return None
+    if not candidate.is_file():
+        return None
+    if candidate.suffix.lower() not in AVATAR_EXTS:
+        return None
+    if candidate.stat().st_size > MAX_AVATAR_BYTES:
+        return None
+    return candidate
+
+
+def _verify_image_signature(suffix: str, content: bytes) -> bool:
+    signatures = {
+        ".png": content.startswith(b"\x89PNG\r\n\x1a\n"),
+        ".jpg": content.startswith(b"\xff\xd8\xff"),
+        ".jpeg": content.startswith(b"\xff\xd8\xff"),
+        ".gif": content.startswith((b"GIF87a", b"GIF89a")),
+        ".webp": content.startswith(b"RIFF") and content[8:12] == b"WEBP",
+    }
+    return signatures.get(suffix, False)
+
+
+@router.get("/avatars/presets")
+def list_avatar_presets() -> list[dict[str, str]]:
+    """列出预设头像库中的可选图片（白名单扩展名、大小上限内）。"""
+    directory = _preset_dir()
+    if not directory.is_dir():
+        return []
+    items: list[dict[str, str]] = []
+    for path in sorted(directory.iterdir()):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in AVATAR_EXTS:
+            continue
+        if path.stat().st_size > MAX_AVATAR_BYTES:
+            continue
+        name = path.name
+        items.append({"name": name, "url": f"/api/avatars/presets/{quote(name)}"})
+    return items
+
+
+@router.get("/avatars/presets/{name}")
+def get_avatar_preset(name: str) -> FileResponse:
+    """返回预设头像图片文件（带缓存头）。"""
+    path = _resolve_preset(name)
+    if not path:
+        raise HTTPException(status_code=404, detail="预设头像不存在")
+    return FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
 
 
 def _member_dict(row: Any) -> dict[str, Any]:
@@ -173,14 +246,44 @@ async def upload_avatar(key: str, file: UploadFile = File(...)) -> dict[str, Any
     if len(content) > MAX_AVATAR_BYTES:
         raise HTTPException(status_code=413, detail="头像不能超过 5MB")
 
-    signatures = {
-        ".png": content.startswith(b"\x89PNG\r\n\x1a\n"),
-        ".jpg": content.startswith(b"\xff\xd8\xff"),
-        ".jpeg": content.startswith(b"\xff\xd8\xff"),
-        ".gif": content.startswith((b"GIF87a", b"GIF89a")),
-        ".webp": content.startswith(b"RIFF") and content[8:12] == b"WEBP",
-    }
-    if not signatures[suffix]:
+    if not _verify_image_signature(suffix, content):
+        raise HTTPException(status_code=400, detail="头像文件内容与扩展名不匹配")
+
+    avatar_dir = _avatar_storage_dir()
+    avatar_dir.mkdir(parents=True, exist_ok=True)
+    for old_suffix in AVATAR_EXTS:
+        old_path = avatar_dir / f"{key}{old_suffix}"
+        if old_path.is_file():
+            old_path.unlink()
+    target = avatar_dir / f"{key}{suffix}"
+    temp = avatar_dir / f".{key}{suffix}.tmp"
+    try:
+        temp.write_bytes(content)
+        temp.replace(target)
+    finally:
+        if temp.exists():
+            temp.unlink()
+    return get_member(key)
+
+
+@router.post("/members/{key}/avatar/preset")
+def apply_preset_avatar(key: str, payload: AvatarPresetApply) -> dict[str, Any]:
+    """将预设头像库中的图片复制为该成员头像（与上传同存储，覆盖旧头像）。"""
+    _validate_key(key)
+    with get_conn(log_writes=False) as conn:
+        require_row(conn.execute("SELECT key FROM members WHERE key = ?", (key,)).fetchone(), "成员不存在")
+
+    name = str(payload.name or "").strip()
+    source = _resolve_preset(name)
+    if not source:
+        raise HTTPException(status_code=404, detail="预设头像不存在")
+
+    content = source.read_bytes()
+    if not content:
+        raise HTTPException(status_code=400, detail="预设头像文件为空")
+
+    suffix = source.suffix.lower()
+    if not _verify_image_signature(suffix, content):
         raise HTTPException(status_code=400, detail="头像文件内容与扩展名不匹配")
 
     avatar_dir = _avatar_storage_dir()
