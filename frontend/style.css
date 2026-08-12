@@ -2263,3 +2263,16 @@ hr.dash { border: none; border-top: 1.5px dashed var(--line); margin: 10px 0; }
 .login-card input { min-height: 42px; padding: 8px; border: 1.5px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); }
 .login-card button { justify-self: start; }
 @media (max-width: 640px) { .agent-diff { grid-template-columns: 1fr; } .agent-fab { right: 14px; bottom: 14px; } }
+
+/* ---- Restart banner & overlay (host change takes effect after restart) ---- */
+.restart-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; padding: 10px 14px; border: 2px solid var(--line); border-radius: 10px; background: color-mix(in oklab, var(--accent) 14%, var(--paper)); }
+.restart-banner-action { background: color-mix(in oklab, var(--accent) 22%, var(--paper)); }
+.restart-banner-text { font-size: 13px; line-height: 1.5; color: var(--ink); min-width: 0; }
+.restart-banner-btn { flex: 0 0 auto; padding: 6px 14px; border: 1.5px solid var(--line); border-radius: 7px; background: var(--ink); color: var(--paper); font-weight: 700; cursor: pointer; }
+.restart-banner-btn:disabled { cursor: not-allowed; opacity: .55; }
+.restart-banner-error { flex-basis: 100%; font-size: 12px; color: var(--danger); }
+.restart-overlay { position: fixed; inset: 0; z-index: 999; display: grid; place-items: center; background: color-mix(in oklab, var(--bg) 78%, transparent); backdrop-filter: blur(2px); }
+.restart-overlay-card { display: grid; gap: 8px; padding: 22px 28px; border: 2px solid var(--line); border-radius: 12px; background: var(--paper); box-shadow: 5px 5px 0 var(--line); text-align: center; }
+.restart-overlay-title { font-family: 'Caveat', cursive; font-size: 30px; font-weight: 700; }
+.restart-overlay-sub { font-size: 13px; color: var(--ink-soft); line-height: 1.5; }
+.restart-banner-hint { flex: 0 0 auto; font-size: 12px; color: var(--ink-soft); }

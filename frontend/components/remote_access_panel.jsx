@@ -10,6 +10,9 @@ function RemoteAccessPanel({ onClose }) {
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
   const [busyHost, setBusyHost] = React.useState(false);
+  const [restartPending, setRestartPending] = React.useState(null); // host to bind after restart
+  const [restartBusy, setRestartBusy] = React.useState(false);
+  const [restartError, setRestartError] = React.useState('');
   const [busyAutostart, setBusyAutostart] = React.useState(false);
   const [busyPassword, setBusyPassword] = React.useState(false);
   const [pwForm, setPwForm] = React.useState({ current: '', next: '', confirm: '' });
@@ -25,13 +28,30 @@ function RemoteAccessPanel({ onClose }) {
   React.useEffect(() => { refresh(); }, [refresh]);
 
   const toggleHost = async (enableRemote) => {
-    setBusyHost(true); setNotice(''); setError('');
+    setBusyHost(true); setNotice(''); setError(''); setRestartError('');
     try {
       const result = await remoteFetchJson('/api/settings/host', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable_remote: enableRemote }) });
-      setNotice(result.restart_required ? `设置已保存，将在重启应用后监听 ${result.host}。` : `设置已保存，正在监听 ${result.host}。`);
+      if (result.restart_required) {
+        setNotice(`设置已保存：重启后监听 ${result.host}。`);
+        setRestartPending(result.host);
+      } else {
+        setNotice(`设置已保存，正在监听 ${result.host}。`);
+        setRestartPending(null);
+      }
       await refresh();
     } catch (err) { setError(err.message || '修改监听地址失败'); }
     finally { setBusyHost(false); }
+  };
+
+  const doRestart = async () => {
+    if (!restartPending) return;
+    setRestartBusy(true); setRestartError('');
+    try {
+      await window.relaunchApp(restartPending);
+    } catch (err) {
+      setRestartError(err.message || '重启失败，请手动重启应用');
+      setRestartBusy(false);
+    }
   };
 
   const toggleAutostart = async (enabled) => {
@@ -86,6 +106,18 @@ function RemoteAccessPanel({ onClose }) {
       <Btn primary={remoteEnabled} ghost={!remoteEnabled} disabled={busyHost} onClick={() => toggleHost(true)}>允许 Tailscale 访问</Btn>
     </div>
     {info && <div className="mono" style={{ color: 'var(--ink-soft)', marginBottom: 16 }}>当前生效：{info.current_host}{info.restart_required ? `（重启后将改为 ${info.pending_host}）` : ''}</div>}
+    {info?.bind_warning && !info.restart_required && <div className="sketch" style={{ padding: 10, marginBottom: 16, color: 'var(--ink-soft)' }}>{info.bind_warning}</div>}
+    {restartPending && (
+      <div className="sketch" style={{ padding: 12, marginBottom: 16, background: 'color-mix(in oklab, var(--accent) 10%, var(--paper))' }}>
+        <div className="mono">变更将在重启后生效。点击下方按钮由应用自动重启（约 10 秒）。</div>
+        {restartPending !== '127.0.0.1' && <div className="mono" style={{ marginTop: 6 }}>重启完成后，请在手机上打开 <strong>http://{restartPending}:{window.location.port || '8000'}</strong> 并重新登录。</div>}
+        {restartPending === '127.0.0.1' && <div className="mono" style={{ marginTop: 6 }}>重启完成后请在本机打开 <strong>http://127.0.0.1:{window.location.port || '8000'}</strong> 并重新登录。</div>}
+        <div style={{ marginTop: 10 }}>
+          <Btn primary disabled={restartBusy} onClick={doRestart}>{restartBusy ? '重启中…' : '立即重启'}</Btn>
+        </div>
+        {restartError && <div className="mono" style={{ marginTop: 8, color: 'var(--danger)' }}>{restartError}</div>}
+      </div>
+    )}
 
     <DashLabel>修改家庭共享密码</DashLabel>
     <form className="daily-form" style={{ display: 'grid', gap: 10, marginBottom: 16 }} onSubmit={submitPassword}>

@@ -19,6 +19,12 @@ def _current_bound_host() -> str:
     return os.getenv("HEALTH_BOUND_HOST") or os.getenv("HEALTH_HOST", "127.0.0.1")
 
 
+def _bind_warning() -> str | None:
+    # Set by run_backend.py at startup (stale/absent Tailscale IP handling).
+    warning = os.getenv("HEALTH_BOUND_WARNING")
+    return warning or None
+
+
 class HostUpdate(BaseModel):
     enable_remote: bool
 
@@ -55,6 +61,7 @@ def get_system_settings() -> dict:
         "current_host": current_host,
         "pending_host": pending_host,
         "restart_required": current_host != pending_host,
+        "bind_warning": _bind_warning(),
         "password_source": password_source,
         "autostart_supported": system_settings.autostart_supported(),
         "autostart_enabled": system_settings.autostart_status() if system_settings.autostart_supported() else False,
@@ -106,6 +113,16 @@ def update_host(payload: HostUpdate) -> dict:
             raise HTTPException(status_code=409, detail="未检测到已连接的 Tailscale IPv4 地址，不能启用手机访问")
     system_settings.save_settings({"host": new_host})
     return {"ok": True, "host": new_host, "restart_required": _current_bound_host() != new_host}
+
+
+@router.post("/settings/restart")
+def restart_app() -> dict:
+    """Browser-triggered self-restart: spawn a replacement process that re-binds
+    per current settings, then stop this server gracefully (~2s)."""
+    import lifecycle
+
+    pid = lifecycle.request_restart()
+    return {"ok": True, "pid": pid, "pending_host": system_settings.resolved_host()}
 
 
 @router.post("/settings/password")

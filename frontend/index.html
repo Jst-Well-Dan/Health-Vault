@@ -11,7 +11,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600;700&family=Kalam:wght@300;400;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260807-settings">
+  <link rel="stylesheet" href="style.css?v=20260812-restart-banner">
 
   <!-- Runtime dependencies are vendored for offline desktop use. Keep this order: React/Babel/libs before JSX. -->
   <script src="vendor/react.development.js"></script>
@@ -25,6 +25,7 @@
   <div id="root"></div>
 
   <script type="text/babel" src="components/primitives.jsx?v=20260426-mobile-modal"></script>
+  <script type="text/babel" src="components/restart_banner.jsx?v=20260812-restart-banner"></script>
   <script type="text/babel" src="components/member_editor.jsx?v=20260808-avatar-presets"></script>
   <script type="text/babel" src="components/backup_panel.jsx?v=20260803-backups"></script>
   <script type="text/babel" src="components/settings_panel.jsx?v=20260807-app-settings"></script>
@@ -152,6 +153,8 @@
               <Btn ghost onClick={() => setSettingsOpen(true)}>设置</Btn>
             </div>
           </div>
+
+          <RestartBanner />
 
           <div className="screen-tabs" data-screen-label="顶层导航">
             {SCREENS.map(s => (

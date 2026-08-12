@@ -63,6 +63,39 @@ def resolved_host() -> str:
     return os.getenv("HEALTH_HOST") or load_settings().get("host") or "127.0.0.1"
 
 
+def resolve_bind_host_with_heal() -> tuple[str, str | None]:
+    """Resolve the host to bind at startup, self-healing stale Tailscale IPs.
+
+    Returns ``(host, warning)`` where warning is a user-facing notice:
+    - configured host no longer matches the current Tailscale IP -> rewrite
+      settings to the live IP and continue;
+    - Tailscale is not connected yet (e.g. app started before Tailscale at
+      boot) -> bind 127.0.0.1 for now, keep the remote config for a later
+      restart, and warn;
+    - HEALTH_HOST env is set -> always respected (never rewritten), only warn.
+    """
+    env_host = os.getenv("HEALTH_HOST")
+    host = env_host or load_settings().get("host") or "127.0.0.1"
+    warning = None
+    if host == "127.0.0.1":
+        return host, warning
+    current = tailscale_bind_host()
+    if current and current != host:
+        if env_host:
+            warning = f"配置的 HEALTH_HOST={host} 与当前 Tailscale 地址 {current} 不一致，可能无法绑定"
+        else:
+            save_settings({"host": current})
+            warning = f"Tailscale 地址已由 {host} 更新为 {current}"
+            host = current
+    elif not current:
+        if env_host:
+            warning = f"Tailscale 未连接，但 HEALTH_HOST={host} 仍指向远程地址，启动可能失败"
+        else:
+            host = "127.0.0.1"
+            warning = "Tailscale 未连接，暂以本机模式启动；连接后可在设置中一键重启恢复手机访问"
+    return host, warning
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS)

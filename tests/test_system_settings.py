@@ -114,6 +114,77 @@ class SystemSettingsTest(unittest.TestCase):
                 refused = client.post("/api/settings/host", json={"enable_remote": True})
             self.assertEqual(refused.status_code, 409)
 
+    def test_resolve_bind_host_with_heal_local(self):
+        from services import system_settings
+        with patch("services.system_settings.tailscale_bind_host", return_value=None):
+            host, warning = system_settings.resolve_bind_host_with_heal()
+        self.assertEqual((host, warning), ("127.0.0.1", None))
+
+    def test_resolve_bind_host_with_heal_keeps_matching_tailscale_ip(self):
+        from services import system_settings
+        system_settings.save_settings({"host": "100.1.2.3"})
+        with patch("services.system_settings.tailscale_bind_host", return_value="100.1.2.3"):
+            host, warning = system_settings.resolve_bind_host_with_heal()
+        self.assertEqual((host, warning), ("100.1.2.3", None))
+
+    def test_resolve_bind_host_with_heal_rewrites_stale_ip(self):
+        from services import system_settings
+        system_settings.save_settings({"host": "100.1.2.3"})
+        with patch("services.system_settings.tailscale_bind_host", return_value="100.4.5.6"):
+            host, warning = system_settings.resolve_bind_host_with_heal()
+        self.assertEqual(host, "100.4.5.6")
+        self.assertIn("100.4.5.6", warning or "")
+        self.assertEqual(system_settings.load_settings()["host"], "100.4.5.6")
+
+    def test_resolve_bind_host_with_heal_falls_back_but_keeps_remote_config(self):
+        from services import system_settings
+        system_settings.save_settings({"host": "100.1.2.3"})
+        with patch("services.system_settings.tailscale_bind_host", return_value=None):
+            host, warning = system_settings.resolve_bind_host_with_heal()
+        self.assertEqual(host, "127.0.0.1")
+        self.assertIn("一键重启", warning or "")
+        self.assertEqual(system_settings.load_settings()["host"], "100.1.2.3")  # kept for a later restart
+
+    def test_resolve_bind_host_with_heal_never_rewrites_env_host(self):
+        from services import system_settings
+        os.environ["HEALTH_HOST"] = "100.9.9.9"
+        system_settings.save_settings({"host": "100.1.2.3"})
+        try:
+            with patch("services.system_settings.tailscale_bind_host", return_value="100.4.5.6"):
+                host, warning = system_settings.resolve_bind_host_with_heal()
+        finally:
+            os.environ.pop("HEALTH_HOST", None)
+        self.assertEqual(host, "100.9.9.9")
+        self.assertIn("HEALTH_HOST", warning or "")
+        self.assertEqual(system_settings.load_settings()["host"], "100.1.2.3")
+
+    def test_bind_warning_surfaced_in_system_settings(self):
+        with TestClient(self.app) as client:
+            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
+            response = client.get("/api/settings/system")
+            self.assertIsNone(response.json().get("bind_warning"))
+            os.environ["HEALTH_BOUND_WARNING"] = "Tailscale 未连接，暂以本机模式启动"
+            try:
+                response = client.get("/api/settings/system")
+            finally:
+                os.environ.pop("HEALTH_BOUND_WARNING", None)
+            self.assertEqual(response.json()["bind_warning"], "Tailscale 未连接，暂以本机模式启动")
+
+    def test_restart_endpoint_triggers_lifecycle_restart(self):
+        with TestClient(self.app) as client:
+            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
+            with patch("lifecycle.request_restart", return_value=4242) as request_restart:
+                response = client.post("/api/settings/restart")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["ok"], True)
+        self.assertEqual(response.json()["pid"], 4242)
+        self.assertEqual(response.json()["pending_host"], "127.0.0.1")
+        request_restart.assert_called_once_with()
+
+    def test_restart_endpoint_requires_login(self):
+        with TestClient(self.app) as client:
+            self.assertEqual(client.post("/api/settings/restart").status_code, 401)
+
     def test_windows_autostart_script_allows_empty_standard_output(self):
         from services import system_settings
         completed = subprocess.CompletedProcess(["powershell"], 0, stdout=None, stderr=None)
