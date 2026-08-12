@@ -234,7 +234,7 @@ export class HealthAgent {
       "另外输出 patient_name_on_report 字段：如实抄录报告上写明的患者/受检者姓名（若有），用于核对是否与上面确认的成员一致；报告没有写姓名就填 null，绝不要猜测或套用成员姓名。",
       "JSON 必须符合：{patient_name_on_report:null|string,visit:{date:'YYYY-MM-DD',type:'体检'|'就医'|'复查'|'疫苗'|string,hospital:null|string,department:null|string,doctor:null|string,chief_complaint:null|string,severity:null|'严重'|'一般'|'轻微',diagnosis:string[],notes:null|string,note_full:null|string},labs:[{panel:string,test_name:string,value:null|string,unit:null|string,ref_low:null|string,ref_high:null|string,status:'normal'|'high'|'low'|'abnormal'|'unknown'}],attachment_title:null|string,attachment_tag:'体检报告'|string}。",
       "只录入报告明确列出的本次指标；不要把历史趋势、推测或未经明确参考范围支持的判断当作化验结果。",
-      source.text ? `PDF 可提取文本如下：\n${source.text.slice(0, 12000)}` : "报告没有可提取文本，请仔细阅读图片。",
+      source.text ? `以下是 MinerU 从原始报告转换的 Markdown，请只根据其中明确内容提取：\n${source.text.slice(0, 100000)}` : "报告缺少 MinerU Markdown，无法解析。",
     ].join("\n\n");
     const response = await this.models.complete(model, {
       messages: [{

@@ -50,8 +50,10 @@ const FieldLabel = ({ label, required, flagged, className = '', children }) => (
   </label>
 );
 
-function ReportImportModal({ member, onClose, onImported }) {
+function ReportImportModal({ member: initialMember, members = [], onClose, onImported }) {
   const fileInputRef = React.useRef(null);
+  const [memberKey, setMemberKey] = React.useState(() => initialMember?.key || '');
+  const member = initialMember || members.find((item) => item.key === memberKey) || null;
   const [source, setSource] = React.useState(null);
   const [proposal, setProposal] = React.useState(null);
   const [form, setForm] = React.useState(null);
@@ -84,6 +86,10 @@ function ReportImportModal({ member, onClose, onImported }) {
 
   const analyze = async () => {
     if (!source) return;
+    if (!member) {
+      setError('请先选择这份报告要归档的家庭成员。');
+      return;
+    }
     setBusy(true); setError('');
     try {
       const response = await fetch('/api/agent-runtime/report/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source, member: { key: member.key, name: member.name } }) });
@@ -159,6 +165,10 @@ function ReportImportModal({ member, onClose, onImported }) {
 
   const commit = async () => {
     setError('');
+    if (!member) {
+      setError('请先选择这份报告要归档的家庭成员。');
+      return;
+    }
     if (isBlank(form.date) || !/^\d{4}-\d{2}-\d{2}$/.test(form.date.trim())) {
       setError('请填写报告日期（格式 YYYY-MM-DD）后再写入。');
       return;
@@ -196,7 +206,8 @@ function ReportImportModal({ member, onClose, onImported }) {
         </div>
 
         {!result && <>
-          <p className="report-import-help">选择 PDF 或图片后，原件会先暂存于本机。解析会把报告页面发送给你在健康助手中配置的视觉模型；请确认你接受该模型服务的隐私政策。</p>
+          <p className="report-import-help">选择 PDF 或图片后，原件会先暂存于本机，再发送给 MinerU 转换为 Markdown；解析会把该 Markdown 和已选成员信息发送给你在健康助手中配置的 AI 模型。请确认你接受 MinerU 与模型服务的隐私政策。</p>
+          {members.length > 0 && <label className="report-import-member"><span>归档至家庭成员 *</span><select value={memberKey} onChange={(event) => { setMemberKey(event.target.value); setError(''); }} disabled={busy || Boolean(proposal)}><option value="">请选择成员</option>{members.map((item) => <option key={item.key} value={item.key}>{item.name}{item.full_name && item.full_name !== item.name ? `（${item.full_name}）` : ''}</option>)}</select>{proposal && <small>如需更换成员，请关闭后重新上传并解析。</small>}</label>}
           <input ref={fileInputRef} type="file" accept=".pdf,image/png,image/jpeg,image/webp,image/bmp" onChange={stageFile} hidden />
           <div className="report-import-actions">
             <Btn primary onClick={selectFile} disabled={busy}>{source ? '重新选择报告' : '选择报告文件'}</Btn>

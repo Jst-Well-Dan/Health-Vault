@@ -21,6 +21,9 @@ function AgentPanel({ onDataChanged, settingsAction, onSettingsActionHandled }) 
   const [settings, setSettings] = React.useState(null);
   const [apiKey, setApiKey] = React.useState('');
   const [notice, setNotice] = React.useState('');
+  const [reportImportOpen, setReportImportOpen] = React.useState(false);
+  const [reportMembers, setReportMembers] = React.useState([]);
+  const [openingReportImport, setOpeningReportImport] = React.useState(false);
   const endRef = React.useRef(null);
 
   const loadSettings = React.useCallback(async (provider) => {
@@ -79,6 +82,23 @@ function AgentPanel({ onDataChanged, settingsAction, onSettingsActionHandled }) 
     try { await agentRequest('/agent/send', { method: 'POST', body: JSON.stringify({ message: content }) }); }
     catch (err) { setBusy(false); setNotice(err.message || String(err)); }
   };
+  const openReportImport = async () => {
+    if (openingReportImport) return;
+    setOpeningReportImport(true); setNotice('');
+    try {
+      const response = await fetch('/api/members');
+      const text = await response.text();
+      if (!response.ok) {
+        try { throw new Error(JSON.parse(text).detail || '无法读取家庭成员'); }
+        catch (error) { if (error instanceof SyntaxError) throw new Error(text || '无法读取家庭成员'); throw error; }
+      }
+      const members = JSON.parse(text);
+      if (!Array.isArray(members) || !members.length) throw new Error('请先创建家庭成员，再上传报告。');
+      setReportMembers(members);
+      setReportImportOpen(true);
+    } catch (err) { setNotice(err.message || String(err)); }
+    finally { setOpeningReportImport(false); }
+  };
   const answerApproval = (approved) => { respond(request.id, approved).catch(err => setNotice(err.message)); setRequest(null); };
   const chooseProvider = async (provider) => { const next = await loadSettings(provider); setSettings({ ...next, provider, model: next.models[0]?.id || '' }); };
   const saveSettings = async () => {
@@ -94,10 +114,11 @@ function AgentPanel({ onDataChanged, settingsAction, onSettingsActionHandled }) 
     <button className={`agent-fab ${open ? 'panel-open' : ''}`} onClick={() => setOpen(value => !value)} aria-label="打开健康助手">✦</button>
     <aside className={`agent-panel ${open ? 'open' : ''}`} aria-hidden={!open}>
       <header><div><b>健康档案助手</b></div><div><button onClick={resetContext} title="重置对话上下文">重置</button><button onClick={() => setOpen(false)}>×</button></div></header>
-      <div className="agent-messages">{!messages.length && <div className="agent-empty">可以问：“爸爸最近在吃什么药？”<br/>写入前会展示实际字段并等待你确认。</div>}{messages.map((message, index) => <div key={message.id || index} className={`agent-message ${message.role}`}>{message.content}</div>)}<div ref={endRef} /></div>
+      <div className="agent-messages">{!messages.length && <div className="agent-empty">可以问：“爸爸最近在吃什么药？”<br/>也可以点击下方「上传报告」导入 PDF 或图片。<br/>写入前会展示实际字段并等待你确认。</div>}{messages.map((message, index) => <div key={message.id || index} className={`agent-message ${message.role}`}>{message.content}</div>)}<div ref={endRef} /></div>
       {notice && <div className="agent-notice">{notice}</div>}
-      <div className="agent-compose"><textarea value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} placeholder="询问或整理健康档案…" /><button onClick={busy ? () => agentRequest('/agent/stop', { method: 'POST' }) : send}>{busy ? '停止' : '发送'}</button></div>
+      <div className="agent-compose"><textarea value={draft} onChange={e => setDraft(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} placeholder="询问或整理健康档案…" /><div className="agent-compose-actions"><button onClick={openReportImport} disabled={openingReportImport} title="上传 PDF 或图片报告">{openingReportImport ? '读取中…' : '上传报告'}</button><button onClick={busy ? () => agentRequest('/agent/stop', { method: 'POST' }) : send}>{busy ? '停止' : '发送'}</button></div></div>
     </aside>
+    {reportImportOpen && <ReportImportModal members={reportMembers} onClose={() => setReportImportOpen(false)} onImported={async () => { await onDataChanged?.(); setNotice('报告已归档，可继续向助手提问。'); }} />}
     {request && <div className="agent-modal-backdrop"><div className="agent-dialog"><h3>确认数据改动</h3><div className="agent-tool">{request.payload.tool}</div><div className="agent-diff"><section><b>修改前</b><pre>{JSON.stringify(request.payload.before, null, 2) || '—'}</pre></section><section><b>修改后</b><pre>{JSON.stringify(request.payload.after, null, 2) || '—'}</pre></section></div><div className="agent-actions"><button onClick={() => answerApproval(false)}>拒绝</button><button className="primary" onClick={() => answerApproval(true)}>确认执行</button></div></div></div>}
     {settingsOpen && settings && <div className="agent-modal-backdrop"><div className="agent-dialog agent-settings"><h3>模型设置</h3>{settings.source === 'pi' && <div className="agent-tool">当前跟随 Pi 默认模型：{settings.piDefault?.provider}/{settings.piDefault?.model}</div>}<label>Provider<select value={settings.provider} onChange={e => chooseProvider(e.target.value)}>{settings.providers.map(item => <option key={item.id} value={item.id}>{item.name}{item.configured ? ' · 已登录' : ''}</option>)}</select></label><label>模型<select value={settings.model} onChange={e => setSettings({ ...settings, model: e.target.value })}>{settings.models.map(item => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></label><label>API Key（留空则不修改）<input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)} /></label><div className="agent-actions"><button onClick={() => setSettingsOpen(false)}>取消</button>{settings.providers.find(item => item.id === settings.provider)?.auth.includes('oauth') && <button onClick={oauthLogin}>OAuth 登录</button>}<button className="primary" onClick={saveSettings}>保存</button></div></div></div>}
   </>;

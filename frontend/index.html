@@ -25,10 +25,11 @@
   <div id="root"></div>
 
   <script type="text/babel" src="components/primitives.jsx?v=20260426-mobile-modal"></script>
-  <script type="text/babel" src="components/member_editor.jsx?v=20260803-member-avatar"></script>
+  <script type="text/babel" src="components/member_editor.jsx?v=20260808-avatar-presets"></script>
   <script type="text/babel" src="components/backup_panel.jsx?v=20260803-backups"></script>
   <script type="text/babel" src="components/settings_panel.jsx?v=20260807-app-settings"></script>
   <script type="text/babel" src="components/remote_access_panel.jsx?v=20260807-remote-access"></script>
+  <script type="text/babel" src="components/mineru_settings_panel.jsx?v=20260807-mineru-settings"></script>
   <script type="text/babel" src="components/screen_family.jsx?v=20260803-member-management"></script>
   <script type="text/babel" src="components/report_import.jsx?v=20260807-report-import-form"></script>
   <script type="text/babel" src="components/attachment_upload.jsx?v=20260803-attachment-upload"></script>
@@ -66,6 +67,7 @@
       const [memberEditor, setMemberEditor] = React.useState(null);
       const [backupOpen, setBackupOpen] = React.useState(false);
       const [remoteAccessOpen, setRemoteAccessOpen] = React.useState(false);
+      const [mineruSettingsOpen, setMineruSettingsOpen] = React.useState(false);
       const [settingsOpen, setSettingsOpen] = React.useState(false);
       const [agentSettingsAction, setAgentSettingsAction] = React.useState(null);
       const [meta, setMeta] = React.useState(null);
@@ -223,11 +225,13 @@
               setSettingsOpen(false);
               if (section === 'backup') setBackupOpen(true);
               else if (section === 'remote') setRemoteAccessOpen(true);
+              else if (section === 'mineru') setMineruSettingsOpen(true);
               else setAgentSettingsAction({ section, requestedAt: Date.now() });
             }}
           />}
           {backupOpen && <BackupPanel onClose={() => setBackupOpen(false)} />}
           {remoteAccessOpen && <RemoteAccessPanel onClose={() => setRemoteAccessOpen(false)} />}
+          {mineruSettingsOpen && <MineruSettingsPanel onClose={() => setMineruSettingsOpen(false)} />}
           {memberEditor && <MemberEditorModal
             mode={memberEditor.mode}
             kind={memberEditor.kind}

@@ -4,6 +4,7 @@ import atexit
 import asyncio
 import hashlib
 import hmac
+import http.client
 import json
 import os
 import secrets
@@ -23,6 +24,10 @@ from fastapi.responses import Response, StreamingResponse
 _process: subprocess.Popen | None = None
 _port: int | None = None
 _secret: str | None = None
+
+# The Agent runtime is loopback-only; never route its traffic through a system
+# or environment HTTP proxy (on Windows urllib inherits the WinINET proxy).
+_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def _root() -> Path:
@@ -89,7 +94,7 @@ def start_agent_runtime(port: int) -> None:
     _process = subprocess.Popen([node, str(script)], cwd=_root(), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(80):
         try:
-            with urllib.request.urlopen(_url("/health"), timeout=0.25) as response:
+            with _opener.open(_url("/health"), timeout=0.25) as response:
                 payload = response.read().decode("utf-8")
                 expected = hmac.new(_load_secret().encode("utf-8"), b"health", hashlib.sha256).hexdigest()
                 if response.status == 200 and hmac.compare_digest(json.loads(payload).get("proof", ""), expected):
@@ -127,8 +132,11 @@ def _request(path: str, method: str, body: bytes = b"", content_type: str | None
 
 def _proxy_request(path: str, method: str, body: bytes, content_type: str | None) -> Response:
     """Perform blocking loopback I/O outside FastAPI's event-loop thread."""
+    # Vision extraction can process several rendered PDF pages and legitimately
+    # take longer than ordinary Agent requests. Keep the longer timeout scoped.
+    timeout = 180 if path.split("?", 1)[0] == "/report/analyze" else 60
     try:
-        with urllib.request.urlopen(_request(path, method, body, content_type), timeout=60) as upstream:
+        with _opener.open(_request(path, method, body, content_type), timeout=timeout) as upstream:
             return Response(content=upstream.read(), status_code=upstream.status, media_type=upstream.headers.get_content_type())
     except urllib.error.HTTPError as error:
         return Response(content=error.read(), status_code=error.code, media_type=error.headers.get_content_type())
@@ -164,13 +172,17 @@ def proxy_agent_stream(request: Request) -> StreamingResponse:
 
     def stream() -> Iterator[bytes]:
         try:
-            with urllib.request.urlopen(_request("/agent/stream", "GET"), timeout=3600) as upstream:
+            with _opener.open(_request("/agent/stream", "GET"), timeout=3600) as upstream:
                 while True:
                     chunk = upstream.readline()
                     if not chunk:
                         break
                     yield chunk
-        except (urllib.error.URLError, RuntimeError):
+        except (urllib.error.URLError, http.client.HTTPException, OSError, RuntimeError):
+            # The loopback upstream died or went silent (half-open connection,
+            # sleep, network switch, provider drop). End the stream instead of
+            # crashing the ASGI response; the browser's EventSource onerror
+            # surfaces a friendly notice to the user.
             return
 
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

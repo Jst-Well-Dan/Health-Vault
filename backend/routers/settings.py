@@ -2,10 +2,12 @@ import os
 import platform
 
 from fastapi import APIRouter, HTTPException, Request
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 import auth
-from services import system_settings
+from services import mineru, system_settings
 
 router = APIRouter(tags=["settings"])
 
@@ -30,6 +32,14 @@ class AutostartUpdate(BaseModel):
     enabled: bool
 
 
+class MineruModeUpdate(BaseModel):
+    mode: Literal["flash", "extract"]
+
+
+class MineruTokenUpdate(BaseModel):
+    token: str = Field(min_length=16, max_length=4096)
+
+
 @router.get("/settings/system")
 def get_system_settings() -> dict:
     current_host = _current_bound_host()
@@ -50,6 +60,41 @@ def get_system_settings() -> dict:
         "autostart_enabled": system_settings.autostart_status() if system_settings.autostart_supported() else False,
         "tailscale": system_settings.detect_tailscale(),
     }
+
+
+@router.get("/settings/mineru")
+def get_mineru_settings() -> dict:
+    return mineru.status()
+
+
+@router.put("/settings/mineru/mode")
+def update_mineru_mode(payload: MineruModeUpdate) -> dict:
+    mineru.save_mode(payload.mode)
+    return mineru.status()
+
+
+@router.post("/settings/mineru/token")
+def save_mineru_token(payload: MineruTokenUpdate) -> dict:
+    token = payload.token.strip()
+    if not token:
+        raise HTTPException(status_code=422, detail="Token 不能为空")
+    try:
+        mineru.save_managed_token(token)
+        if not mineru.verify_managed_token():
+            mineru.delete_managed_token()
+            raise HTTPException(status_code=422, detail="MinerU Token 格式验证失败，请检查后重试")
+    except mineru.SecureStorageError as exc:
+        raise HTTPException(status_code=503, detail="无法访问系统凭据库，未保存 Token") from exc
+    return mineru.status()
+
+
+@router.delete("/settings/mineru/token")
+def delete_mineru_token() -> dict:
+    try:
+        mineru.delete_managed_token()
+    except mineru.SecureStorageError as exc:
+        raise HTTPException(status_code=503, detail="无法访问系统凭据库") from exc
+    return mineru.status()
 
 
 @router.post("/settings/host")

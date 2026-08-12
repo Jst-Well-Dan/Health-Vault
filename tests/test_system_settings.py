@@ -56,6 +56,34 @@ class SystemSettingsTest(unittest.TestCase):
             self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 401)
             self.assertEqual(client.post("/api/auth/login", json={"password": "a"}).status_code, 200)
 
+    def test_mineru_status_returns_only_safe_token_state(self):
+        version = subprocess.CompletedProcess(["mineru-open-api", "version"], 0, stdout="mineru-open-api version v0.5.3\n")
+        auth_show = subprocess.CompletedProcess(["mineru-open-api", "auth", "--show"], 0, stdout="Token source: config\nToken: private-value\n")
+        with TestClient(self.app) as client:
+            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
+            with patch("services.mineru.command_path", return_value="/test/mineru-open-api"), patch("services.mineru._managed_token", return_value=None), patch("services.mineru.subprocess.run", side_effect=[version, auth_show]):
+                response = client.get("/api/settings/mineru")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"installed": True, "version": "v0.5.3", "token_configured": True, "token_source": "mineru_cli", "secure_storage_available": True, "mode": "flash"})
+        self.assertNotIn("private-value", response.text)
+
+    def test_mineru_token_can_be_saved_from_any_session_and_never_returned(self):
+        token = "token-that-must-never-appear-in-a-response"
+        safe_status = {"installed": True, "version": "v0.5.3", "token_configured": True, "token_source": "health_vault", "secure_storage_available": True, "mode": "flash"}
+        with TestClient(self.app) as client:
+            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
+            with patch("routers.settings.mineru.save_managed_token") as save_token, patch("routers.settings.mineru.verify_managed_token", return_value=True), patch("routers.settings.mineru.status", return_value=safe_status):
+                response = client.post("/api/settings/mineru/token", json={"token": token})
+        self.assertEqual(response.status_code, 200)
+        save_token.assert_called_once_with(token)
+        self.assertEqual(response.json(), safe_status)
+        self.assertNotIn(token, response.text)
+
+    def test_mineru_token_endpoints_require_login(self):
+        with TestClient(self.app) as client:
+            self.assertEqual(client.post("/api/settings/mineru/token", json={"token": "a" * 16}).status_code, 401)
+            self.assertEqual(client.delete("/api/settings/mineru/token").status_code, 401)
+
     def test_resolved_host_prefers_env_over_file(self):
         from services import system_settings
         system_settings.save_settings({"host": "0.0.0.0"})

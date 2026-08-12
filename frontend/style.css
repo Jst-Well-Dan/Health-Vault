@@ -2152,6 +2152,9 @@ hr.dash { border: none; border-top: 1.5px dashed var(--line); margin: 10px 0; }
 .report-import-header h3 { margin: 2px 0 0; font-family: 'Caveat', cursive; font-size: 30px; }
 .report-import-close { border: 0; background: transparent; color: var(--ink); font-size: 28px; line-height: 1; cursor: pointer; }
 .report-import-help { color: var(--ink-soft); font-size: 13px; line-height: 1.7; }
+.report-import-member { display: grid; gap: 5px; margin: 14px 0; color: var(--ink-soft); font-size: 13px; }
+.report-import-member select { min-height: 40px; padding: 7px; border: 1.5px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); }
+.report-import-member small { color: var(--ink-soft); }
 .report-import-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
 .report-import-label { display: block; margin: 16px 0 7px; color: var(--ink-soft); font-size: 13px; }
 .report-import-status { margin-top: 14px; color: var(--ink-soft); }
@@ -2226,6 +2229,9 @@ hr.dash { border: none; border-top: 1.5px dashed var(--line); margin: 10px 0; }
 .agent-notice { padding: 8px 14px; color: var(--danger); border-top: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }
 .agent-compose { display: flex; gap: 8px; padding: 12px; border-top: 2px solid var(--line); }
 .agent-compose textarea { flex: 1; min-height: 62px; resize: vertical; padding: 9px; border: 1.5px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); }
+.agent-compose-actions { display: flex; flex-direction: column; gap: 8px; }
+.agent-compose-actions button { flex: 1; white-space: nowrap; }
+.agent-compose-actions button:disabled { cursor: not-allowed; opacity: .55; }
 .agent-modal-backdrop { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: 18px; background: #0007; }
 .agent-dialog { width: min(760px, 100%); max-height: 90vh; overflow: auto; padding: 20px; border: 2px solid var(--line); border-radius: 12px; background: var(--paper); box-shadow: 5px 5px 0 var(--line); }
 .agent-dialog h3 { margin: 0 0 10px; font-family: 'Caveat', cursive; font-size: 28px; }

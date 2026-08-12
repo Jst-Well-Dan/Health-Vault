@@ -11,6 +11,11 @@ const apiUrl = required("HEALTH_API_URL");
 const secret = required("HEALTH_AGENT_SECRET");
 const dataHome = required("HEALTH_AGENT_DATA_HOME");
 const clients = new Set<ServerResponse>();
+const DEFAULT_MAX_JSON_BYTES = 1 * 1024 * 1024;
+// A staged report can contain up to eight base64-encoded page previews.  Keep
+// the larger limit scoped to analysis rather than allowing oversized chat and
+// settings requests.
+const MAX_REPORT_ANALYSIS_JSON_BYTES = 64 * 1024 * 1024;
 
 function required(name: string) {
   const value = process.env[name];
@@ -39,12 +44,12 @@ function sendJson(response: ServerResponse, status: number, value: unknown) {
   response.end(JSON.stringify(value));
 }
 
-async function readJson(request: IncomingMessage): Promise<Json> {
+async function readJson(request: IncomingMessage, maxBytes = DEFAULT_MAX_JSON_BYTES): Promise<Json> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > 1024 * 1024) throw new Error("请求过大");
+    if (size > maxBytes) throw new Error("请求过大");
     chunks.push(chunk);
   }
   if (!chunks.length) return {};
@@ -68,7 +73,10 @@ async function handler(request: IncomingMessage, response: ServerResponse) {
     return;
   }
   try {
-    const body = request.method === "GET" ? {} : await readJson(request);
+    const maxBytes = request.method === "POST" && url.pathname === "/report/analyze"
+      ? MAX_REPORT_ANALYSIS_JSON_BYTES
+      : DEFAULT_MAX_JSON_BYTES;
+    const body = request.method === "GET" ? {} : await readJson(request, maxBytes);
     let value: unknown;
     if (request.method === "POST" && url.pathname === "/agent/send") value = await agent.send(String(body.message || ""));
     else if (request.method === "POST" && url.pathname === "/agent/stop") value = agent.stop();

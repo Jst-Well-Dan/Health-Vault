@@ -11,11 +11,28 @@
 - Node.js **22.19+**（含 npm）；
 - Python **3.10+**；
 - Git；
+- **MinerU OpenAPI CLI**：报告导入必需。原始 PDF 或图片会先发给 MinerU 转换为 Markdown，健康助手只解析该 Markdown；
 - 可选：Tailscale，用于手机访问。
+
+安装 MinerU OpenAPI CLI 并确认命令可用：
+
+```powershell
+# Windows（PowerShell）
+irm https://cdn-mineru.openxlab.org.cn/open-api-cli/install.ps1 | iex
+mineru-open-api version
+```
+
+```bash
+# macOS
+curl -fsSL https://cdn-mineru.openxlab.org.cn/open-api-cli/install.sh | sh
+mineru-open-api version
+```
+
+默认使用不需要 Token 的 `flash-extract`，单份限制为 **10 MB / 20 页**。若报告超过限制，或希望使用表格/公式识别，请在 **设置 → MinerU 报告转换** 选择“精确解析”，并输入 MinerU Token；任何已登录的浏览器（含手机端）都可以保存、修改或删除该 Token。Token 仅保存到当前 Windows Credential Manager 或 macOS Keychain；不会写入健康档案、`settings.json`、日志或命令行，保存后也不会在页面中再次显示。也可选择在本机终端运行 `mineru-open-api auth` 配置 Token。应用不会回退到直接 PDF/图片解析：若 MinerU 不可用或转换失败，报告不会送往健康助手模型。若 CLI 不在 `PATH`，可设置 `HEALTH_MINERU_OPEN_API_CLI` 为其可执行文件的绝对路径。
 
 应用数据默认位于项目目录的 `data/`。若设置 `HEALTH_VAULT_HOME`，数据则位于该目录的 `data/` 下。**代码目录和数据目录都应放在受本机账户保护的磁盘中。**
 
-健康档案本身默认只存本机。健康助手和 AI 报告解析是例外：它们会将你输入的消息、报告内容/图片及必要的成员信息发送至你在应用内配置的第三方模型服务。使用前请确认该服务的隐私、保留、地区合规与收费政策。
+健康档案本身默认只存本机。健康助手和 AI 报告解析是例外：原始报告会先发送至你配置的 MinerU 服务以转换为 Markdown；随后，健康助手会将你输入的消息、该 Markdown 和必要的成员信息发送至你在应用内配置的第三方模型服务。使用前请确认这两类服务的隐私、保留、地区合规与收费政策。
 
 ## 2. 首次安装
 
@@ -145,6 +162,16 @@ bash scripts/macos/remove-autostart.sh
 建议至少每月一次，在服务停止后将整个 `data/` 目录复制到加密的外接硬盘或另一个受保护的位置；同时保留多份历史副本。不要只依赖同一磁盘中的 `data/backups/`。
 
 ### 恢复数据库
+
+两种方式任选其一。
+
+**方式一：网页导入（推荐，服务运行中即可）**
+
+1. 打开 **设置 → 数据备份**；
+2. 在“导入备份文件”选择要恢复的 `.db` 文件（可来自其它电脑/手机的导出），勾选确认；
+3. 导入前系统会自动校验文件并创建当前库的预备份；成功后请重启应用。
+
+**方式二：本机脚本（服务停止后）**
 
 1. 停止服务；
 2. 在设置页核对要恢复的备份文件；

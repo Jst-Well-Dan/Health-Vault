@@ -37,6 +37,9 @@ class _Upstream:
     def read(self):
         return b'{"ok": true}'
 
+    def readline(self, limit=-1):
+        return b""
+
 
 def _request() -> Request:
     async def receive():
@@ -52,6 +55,13 @@ def _request() -> Request:
         },
         receive,
     )
+
+
+async def _drain(iterator):
+    chunks = []
+    async for chunk in iterator:
+        chunks.append(chunk)
+    return chunks
 
 
 class AgentRuntimeProxyTest(unittest.TestCase):
@@ -78,7 +88,7 @@ class AgentRuntimeProxyTest(unittest.TestCase):
             self.assertEqual(timeout, 60)
             return _Upstream()
 
-        with patch("agent_runtime.urllib.request.urlopen", side_effect=urlopen):
+        with patch("agent_runtime._opener.open", side_effect=urlopen):
             response = asyncio.run(agent_runtime.proxy_agent_request("agent/settings", _request()))
 
         self.assertEqual(response.status_code, 200)
@@ -86,13 +96,47 @@ class AgentRuntimeProxyTest(unittest.TestCase):
         self.assertEqual(len(upstream_threads), 1)
         self.assertNotEqual(upstream_threads[0], event_loop_thread)
 
+    def test_report_analysis_uses_extended_upstream_timeout(self):
+        observed = []
+
+        def urlopen(request, timeout):
+            observed.append((request.full_url, timeout))
+            return _Upstream()
+
+        with patch("agent_runtime._opener.open", side_effect=urlopen):
+            response = agent_runtime._proxy_request("/report/analyze", "POST", b"{}", "application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(observed, [("http://127.0.0.1:1/report/analyze", 180)])
+
     def test_proxy_returns_gateway_timeout_when_upstream_times_out(self):
-        with patch("agent_runtime.urllib.request.urlopen", side_effect=TimeoutError):
+        with patch("agent_runtime._opener.open", side_effect=TimeoutError):
             with self.assertRaises(HTTPException) as raised:
                 asyncio.run(agent_runtime.proxy_agent_request("agent/settings", _request()))
 
         self.assertEqual(raised.exception.status_code, 504)
         self.assertEqual(raised.exception.detail, "健康助手服务响应超时")
+
+    def test_agent_stream_ends_gracefully_when_upstream_read_times_out(self):
+        def urlopen(_request, timeout):
+            raise TimeoutError("timed out")
+
+        with patch("agent_runtime._opener.open", side_effect=urlopen):
+            response = agent_runtime.proxy_agent_stream(None)
+            chunks = asyncio.run(_drain(response.body_iterator))
+        self.assertEqual(chunks, [])
+
+    def test_agent_stream_uses_no_proxy_opener(self):
+        seen = []
+
+        def urlopen(request, timeout):
+            seen.append(timeout)
+            return _Upstream()
+
+        with patch("agent_runtime._opener.open", side_effect=urlopen):
+            response = agent_runtime.proxy_agent_stream(None)
+            asyncio.run(_drain(response.body_iterator))
+        self.assertEqual(seen, [3600])
 
 
 if __name__ == "__main__":

@@ -1,27 +1,31 @@
-import base64
+import asyncio
 import json
+import os
 import re
 import shutil
+import subprocess
 from datetime import datetime
-from io import BytesIO
 from pathlib import Path
 from uuid import uuid4
 
 import fitz
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from PIL import Image
 from pydantic import BaseModel, Field
 
 import database
 from database import get_conn
 from routers.common import json_dumps, row_to_dict
 from services.backups import create_database_backup
+from services.mineru import SecureStorageError, command_path, extraction_env, resolved_mode
 
 
 router = APIRouter(tags=["imports"])
 
 MAX_FILE_BYTES = 20 * 1024 * 1024
-MAX_PREVIEW_PAGES = 8
+MAX_REPORT_PAGES = 8
+MINERU_FLASH_MAX_BYTES = 10 * 1024 * 1024
+MINERU_TIMEOUT_SECONDS = 900
+MINERU_PROCESS_TIMEOUT_SECONDS = MINERU_TIMEOUT_SECONDS + 30
 ALLOWED_SUFFIXES = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 
 
@@ -78,39 +82,74 @@ def _safe_part(value: str | None, fallback: str) -> str:
     return (cleaned or fallback)[:60]
 
 
-def _image_preview(content: bytes) -> list[dict]:
-    try:
-        image = Image.open(BytesIO(content)).convert("RGB")
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="无法读取图片文件") from exc
-    image.thumbnail((1800, 1800))
-    output = BytesIO()
-    image.save(output, format="PNG", optimize=True)
-    return [{"mime_type": "image/png", "data": base64.b64encode(output.getvalue()).decode("ascii")}]
-
-
-def _pdf_preview(content: bytes) -> tuple[list[dict], str, int]:
+def _pdf_page_count(content: bytes) -> int:
     try:
         document = fitz.open(stream=content, filetype="pdf")
     except Exception as exc:
         raise HTTPException(status_code=400, detail="无法读取 PDF 文件") from exc
     try:
-        page_count = document.page_count
-        if page_count > MAX_PREVIEW_PAGES:
-            raise HTTPException(status_code=400, detail=f"当前最多支持解析 {MAX_PREVIEW_PAGES} 页的报告")
-        images: list[dict] = []
-        texts: list[str] = []
-        for page in document:
-            texts.append(page.get_text("text"))
-            pixmap = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), alpha=False)
-            images.append({"mime_type": "image/png", "data": base64.b64encode(pixmap.tobytes("png")).decode("ascii")})
-        return images, "\n".join(texts).strip(), page_count
+        if document.page_count > MAX_REPORT_PAGES:
+            raise HTTPException(status_code=400, detail=f"当前最多支持解析 {MAX_REPORT_PAGES} 页的报告")
+        return document.page_count
     finally:
         document.close()
 
 
+def _mineru_command() -> str:
+    command = command_path()
+    if command:
+        return command
+    if os.getenv("HEALTH_MINERU_OPEN_API_CLI", "").strip():
+        raise HTTPException(status_code=503, detail="HEALTH_MINERU_OPEN_API_CLI 指向的 MinerU CLI 不可用")
+    raise HTTPException(status_code=503, detail="未找到 mineru-open-api CLI；请安装 MinerU OpenAPI CLI 后重试")
+
+
+def _convert_with_mineru(source_path: Path) -> str:
+    """Convert one private report to Markdown through MinerU OpenAPI CLI."""
+    command = _mineru_command()
+    mode = resolved_mode()
+    if mode not in {"flash", "extract"}:
+        raise HTTPException(status_code=500, detail="HEALTH_MINERU_MODE 只能为 flash 或 extract")
+    if mode == "flash" and source_path.stat().st_size > MINERU_FLASH_MAX_BYTES:
+        raise HTTPException(status_code=422, detail="报告超过 MinerU flash-extract 的 10 MB 限制；请配置 Token 并设置 HEALTH_MINERU_MODE=extract")
+
+    subcommand = "flash-extract" if mode == "flash" else "extract"
+    try:
+        env = extraction_env()
+    except SecureStorageError as exc:
+        raise HTTPException(status_code=503, detail="无法访问 MinerU Token 的系统凭据库") from exc
+    try:
+        completed = subprocess.run(
+            [command, subcommand, str(source_path), "--language", "ch", "--timeout", str(MINERU_TIMEOUT_SECONDS)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=MINERU_PROCESS_TIMEOUT_SECONDS,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="MinerU 转换报告超时，请稍后重试") from exc
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail="无法启动 mineru-open-api CLI") from exc
+    if completed.returncode != 0:
+        if mode == "flash" and completed.returncode == 4:
+            detail = "报告超过 MinerU flash-extract 的限制；请配置 Token 并设置 HEALTH_MINERU_MODE=extract"
+        elif mode == "extract":
+            detail = "MinerU 精确转换失败；请确认已运行 mineru-open-api auth 并检查 Token"
+        else:
+            detail = "MinerU 未能转换该报告，请确认文件可读后重试"
+        raise HTTPException(status_code=422, detail=detail)
+
+    markdown = completed.stdout.strip()
+    if not markdown:
+        raise HTTPException(status_code=422, detail="MinerU 没有生成可用的 Markdown 文件")
+    return markdown
+
+
 def stage_report(filename: str, content: bytes, content_type: str | None = None) -> dict:
-    """Archive an upload in a private staging area and return safe vision inputs."""
+    """Privately stage a report, convert it with MinerU, and return Markdown for AI extraction."""
     filename = _safe_filename(filename)
     suffix = Path(filename).suffix.lower()
     if suffix not in ALLOWED_SUFFIXES:
@@ -123,28 +162,30 @@ def stage_report(filename: str, content: bytes, content_type: str | None = None)
     source_id = uuid4().hex
     folder = _staging_dir(source_id)
     folder.mkdir(parents=True, exist_ok=False)
-    source_path = folder / filename
-    source_path.write_bytes(content)
-    metadata = {"filename": filename, "suffix": suffix, "content_type": content_type or ""}
-    (folder / "metadata.json").write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
-
-    if suffix == ".pdf":
-        images, text, page_count = _pdf_preview(content)
-    else:
-        images, text, page_count = _image_preview(content), "", 1
-    return {
-        "id": source_id,
-        "filename": filename,
-        "page_count": page_count,
-        "text": text,
-        "images": images,
-    }
+    try:
+        source_path = folder / filename
+        source_path.write_bytes(content)
+        page_count = _pdf_page_count(content) if suffix == ".pdf" else 1
+        markdown = _convert_with_mineru(source_path)
+        (folder / "mineru.md").write_text(markdown, encoding="utf-8")
+        metadata = {"filename": filename, "suffix": suffix, "content_type": content_type or "", "mineru_markdown": "mineru.md"}
+        (folder / "metadata.json").write_text(json.dumps(metadata, ensure_ascii=False), encoding="utf-8")
+        return {
+            "id": source_id,
+            "filename": filename,
+            "page_count": page_count,
+            "text": markdown,
+            "images": [],
+        }
+    except Exception:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
 
 
 @router.post("/imports/stage")
 async def stage_upload(file: UploadFile = File(...)) -> dict:
     content = await file.read(MAX_FILE_BYTES + 1)
-    return stage_report(file.filename or "report", content, file.content_type)
+    return await asyncio.to_thread(stage_report, file.filename or "report", content, file.content_type)
 
 
 def _load_staged_source(source_id: str) -> tuple[Path, dict]:
@@ -158,10 +199,21 @@ def _load_staged_source(source_id: str) -> tuple[Path, dict]:
     source_path = folder / _safe_filename(metadata.get("filename", ""))
     if not source_path.is_file():
         raise HTTPException(status_code=404, detail="暂存的报告文件不存在")
+    _staged_mineru_markdown(source_id, metadata)
     return source_path, metadata
 
 
-def _report_markdown(payload: ReportImportCommit, source_rel: str) -> str:
+def _staged_mineru_markdown(source_id: str, metadata: dict) -> Path:
+    filename = metadata.get("mineru_markdown")
+    if not isinstance(filename, str) or not filename.strip():
+        raise HTTPException(status_code=409, detail="暂存报告缺少 MinerU Markdown，请重新上传")
+    path = _staging_dir(source_id) / _safe_filename(filename)
+    if not path.is_file():
+        raise HTTPException(status_code=409, detail="暂存报告缺少 MinerU Markdown，请重新上传")
+    return path
+
+
+def _report_markdown(payload: ReportImportCommit, source_rel: str, mineru_rel: str) -> str:
     visit = payload.visit
     lines = [
         f"# {visit.chief_complaint or '体检报告'}",
@@ -169,6 +221,7 @@ def _report_markdown(payload: ReportImportCommit, source_rel: str) -> str:
         f"- 日期：{visit.date}",
         f"- 机构：{visit.hospital or '未识别'}",
         f"- 原始报告：`{source_rel}`",
+        f"- MinerU 转换：`{mineru_rel}`",
         "",
         "### 医生诊断",
         "；".join(visit.diagnosis) or "报告未列出明确诊断。",
@@ -223,6 +276,7 @@ def dry_run_report(payload: ReportImportCommit) -> dict:
 @router.post("/imports/commit")
 def commit_report(payload: ReportImportCommit) -> dict:
     source_path, metadata, member_name = _validate_commit(payload)
+    mineru_source_path = _staged_mineru_markdown(payload.source_id, metadata)
     date_compact = payload.visit.date.replace("-", "")
     org = _safe_part(payload.visit.hospital, "未知机构")
     item = _safe_part(payload.visit.chief_complaint, "体检报告")
@@ -232,19 +286,24 @@ def commit_report(payload: ReportImportCommit) -> dict:
     report_dir = _data_dir() / "reports" / payload.member_key
     raw_dir = report_dir / type_dir
     markdown_dir = report_dir / "md"
+    mineru_dir = report_dir / "mineru"
     raw_dir.mkdir(parents=True, exist_ok=True)
     markdown_dir.mkdir(parents=True, exist_ok=True)
+    mineru_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{date_compact}_{org}_{item}_{name}"
     raw_path = raw_dir / f"{stem}{suffix}"
     if raw_path.exists():
         raw_path = raw_dir / f"{stem}_{payload.source_id[:6]}{suffix}"
     markdown_path = markdown_dir / f"{raw_path.stem}.md"
+    mineru_path = mineru_dir / f"{raw_path.stem}.md"
 
-    # Preserve source and an auditable structured summary before the database transaction.
+    # Preserve the original, MinerU conversion, and audited structured summary before writing records.
     shutil.copy2(source_path, raw_path)
+    shutil.copy2(mineru_source_path, mineru_path)
     source_rel = raw_path.relative_to(_data_dir().parent).as_posix()
+    mineru_rel = mineru_path.relative_to(_data_dir().parent).as_posix()
     markdown_rel = markdown_path.relative_to(_data_dir().parent).as_posix()
-    markdown_path.write_text(_report_markdown(payload, source_rel), encoding="utf-8")
+    markdown_path.write_text(_report_markdown(payload, source_rel, mineru_rel), encoding="utf-8")
     backup_path = _backup_database()
 
     with get_conn() as conn:
@@ -258,7 +317,7 @@ def commit_report(payload: ReportImportCommit) -> dict:
                 payload.member_key, payload.visit.date, payload.visit.type, payload.visit.hospital,
                 payload.visit.department, payload.visit.doctor, payload.visit.chief_complaint,
                 payload.visit.severity, json_dumps(payload.visit.diagnosis), payload.visit.notes,
-                payload.visit.note_full or _report_markdown(payload, source_rel), markdown_rel,
+                payload.visit.note_full or _report_markdown(payload, source_rel, mineru_rel), markdown_rel,
             ),
         )
         visit_id = cur.lastrowid
@@ -297,5 +356,6 @@ def commit_report(payload: ReportImportCommit) -> dict:
         "database_path": str(database.DB_PATH),
         "backup_path": str(backup_path),
         "source_file": source_rel,
+        "mineru_markdown_file": mineru_rel,
         "markdown_file": markdown_rel,
     }

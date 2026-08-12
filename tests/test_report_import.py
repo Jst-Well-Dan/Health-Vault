@@ -2,6 +2,9 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from fastapi import HTTPException
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,17 +28,35 @@ class ReportImportFlowTest(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_synthetic_one_page_pdf_is_staged_archived_and_imported(self):
+    def _synthetic_pdf(self):
         document = fitz.open()
         page = document.new_page()
         page.insert_text((72, 72), "Synthetic report fixture: no personal health data.")
         content = document.tobytes()
         document.close()
+        return content
 
-        staged = stage_report("synthetic-report.pdf", content, "application/pdf")
+    @staticmethod
+    def _run_mineru(_command, **_kwargs):
+        class Result:
+            returncode = 0
+            stdout = "# Synthetic MinerU Markdown\n\nNo personal health data.\n"
+
+        return Result()
+
+    def test_synthetic_one_page_pdf_is_staged_archived_and_imported(self):
+        mineru_env = {"MINERU_TOKEN": "synthetic-managed-token"}
+        with patch("routers.imports.command_path", return_value="/test/mineru-open-api"), patch("routers.imports.extraction_env", return_value=mineru_env), patch("routers.imports.subprocess.run", side_effect=self._run_mineru) as run_mineru:
+            staged = stage_report("synthetic-report.pdf", self._synthetic_pdf(), "application/pdf")
+        command = run_mineru.call_args.args[0]
+        self.assertIs(run_mineru.call_args.kwargs["env"], mineru_env)
+        self.assertEqual(command[:2], ["/test/mineru-open-api", "flash-extract"])
+        self.assertIn("--timeout", command)
         self.assertEqual(staged["page_count"], 1)
-        self.assertEqual(len(staged["images"]), 1)
-        self.assertEqual(staged["images"][0]["mime_type"], "image/png")
+        self.assertEqual(staged["images"], [])
+        self.assertIn("Synthetic MinerU Markdown", staged["text"])
+        staging_dir = self.data_dir / "imports" / ".staging" / staged["id"]
+        self.assertTrue((staging_dir / "mineru.md").is_file())
 
         # This proposal represents the reviewed result returned by a configured vision model.
         proposal = ReportImportCommit(
@@ -64,6 +85,7 @@ class ReportImportFlowTest(unittest.TestCase):
         self.assertTrue(Path(result["database_path"]).is_file())
         self.assertTrue(Path(result["backup_path"]).is_file())
         self.assertTrue((self.data_dir.parent / result["source_file"]).is_file())
+        self.assertTrue((self.data_dir.parent / result["mineru_markdown_file"]).is_file())
         self.assertTrue((self.data_dir.parent / result["markdown_file"]).is_file())
         self.assertFalse((self.data_dir / "imports" / ".staging" / staged["id"]).exists())
 
@@ -71,6 +93,15 @@ class ReportImportFlowTest(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM visits").fetchone()[0], 1)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM lab_results").fetchone()[0], 1)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM attachments").fetchone()[0], 1)
+
+    def test_missing_mineru_cleans_private_staging_area(self):
+        with patch("routers.imports.command_path", return_value=None):
+            with self.assertRaises(HTTPException) as raised:
+                stage_report("synthetic-report.png", b"not a real image", "image/png")
+
+        self.assertEqual(raised.exception.status_code, 503)
+        staging_root = self.data_dir / "imports" / ".staging"
+        self.assertFalse(staging_root.exists() and any(staging_root.iterdir()))
 
 
 if __name__ == "__main__":
