@@ -15,20 +15,23 @@ from routers.common import json_dumps, json_loads, require_row
 
 
 router = APIRouter(tags=["members"])
-AVATAR_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+# 顺序即优先级：同名时按这里的前后决定用哪张（不能是 set，否则解析结果随机）。
+AVATAR_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
 SAFE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 ALLOWED_SPECIES = {"human", "cat", "dog", "other"}
 
 
 def _avatar_storage_dir() -> Path:
-    return database.DB_PATH.parent.resolve() / "avatars"
+    """成员头像目录：仓库根目录的 `public/`。
 
-
-def _legacy_avatar_storage_dir() -> Path:
-    """Read-only compatibility location used before avatars moved beside the database."""
+    属于私有运行数据（家人照片），已在 `.gitignore` 里整体排除。
+    可用 `HEALTH_PUBLIC_DIR` 覆盖，供测试指向临时目录。
+    """
     configured = os.getenv("HEALTH_PUBLIC_DIR")
-    return Path(configured).resolve() if configured else database.DB_PATH.parent.resolve() / "public"
+    if configured:
+        return Path(configured).resolve()
+    return (Path(__file__).resolve().parents[2] / "public").resolve()
 
 
 def _find_avatar_in(directory: Path, key: str) -> Path | None:
@@ -43,7 +46,7 @@ def _find_avatar_file(member_key: str) -> Path | None:
     key = str(member_key or "").strip().lower()
     if not key:
         return None
-    return _find_avatar_in(_avatar_storage_dir(), key) or _find_avatar_in(_legacy_avatar_storage_dir(), key)
+    return _find_avatar_in(_avatar_storage_dir(), key)
 
 
 def _find_avatar_url(member_key: str) -> str | None:

@@ -2,10 +2,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from database import BASE_DIR, get_conn, init_db
+from database import REPO_ROOT, get_conn, init_db
 
 
-MOCK_ATTACHMENT_DIR = BASE_DIR / "data" / "mock" / "attachments"
+MOCK_ATTACHMENT_DIR = REPO_ROOT / "tests" / "fixtures" / "attachments"
 
 MEMBERS = [
     {
@@ -318,7 +318,7 @@ def seed_mock_data(reset: bool = False) -> None:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
-                (*item[:-2], str((MOCK_ATTACHMENT_DIR / item[-2]).relative_to(BASE_DIR)), item[-1])
+                (*item[:-2], (MOCK_ATTACHMENT_DIR / item[-2]).relative_to(MOCK_ATTACHMENT_DIR.parent).as_posix(), item[-1])
                 for item in ATTACHMENTS
             ],
         )

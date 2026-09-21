@@ -1,10 +1,8 @@
-import re
 from typing import Optional
 from pathlib import Path
-from uuid import uuid4
 
 import database
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from database import get_conn
@@ -14,13 +12,6 @@ from routers.common import require_row, row_to_dict, rows_to_dicts
 
 
 router = APIRouter(tags=["attachments"])
-
-MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
-ALLOWED_ATTACHMENT_SUFFIXES = {
-    ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif",
-    ".txt", ".md", ".csv", ".json", ".doc", ".docx", ".xls", ".xlsx",
-}
-SAFE_PART_RE = re.compile(r'[\\/:*?"<>|\r\n]+')
 
 
 def _resolve_attachment_path(file_path: str | None) -> Path:
@@ -51,34 +42,6 @@ def _resolve_attachment_path(file_path: str | None) -> Path:
     raise HTTPException(status_code=404, detail="附件文件不存在")
 
 
-def _safe_filename(value: str | None) -> str:
-    name = Path(value or "").name.strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="文件名不能为空")
-    suffix = Path(name).suffix.lower()
-    if suffix not in ALLOWED_ATTACHMENT_SUFFIXES:
-        raise HTTPException(status_code=400, detail="不支持的附件文件类型")
-    stem = Path(name).stem.strip() or "attachment"
-    safe_stem = re.sub(r"\s+", "_", SAFE_PART_RE.sub("_", stem)).strip("._") or "attachment"
-    return f"{safe_stem[:80]}{suffix}"
-
-
-def _safe_member_dir(member_key: str) -> str:
-    safe = re.sub(r"\s+", "_", SAFE_PART_RE.sub("_", str(member_key or "").strip())).strip("._")
-    return (safe or "member")[:80]
-
-
-def _attachment_storage_dir(member_key: str) -> Path:
-    return database.DB_PATH.parent.resolve() / "attachments" / _safe_member_dir(member_key)
-
-
-def _stored_file_path(path: Path) -> str:
-    try:
-        return path.resolve().relative_to(database.DB_PATH.parent.parent.resolve()).as_posix()
-    except ValueError:
-        return str(path.resolve())
-
-
 def _parse_visit_id(value: str | int | None) -> int | None:
     if value is None or value == "":
         return None
@@ -98,22 +61,6 @@ def _validate_member_and_visit(member_key: str, visit_id: int | None) -> None:
             )
             if visit["member_key"] != member_key:
                 raise HTTPException(status_code=422, detail="关联就诊记录不属于当前成员")
-
-
-def _insert_attachment_row(payload: dict) -> dict:
-    with get_conn() as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO attachments
-              (member_key, visit_id, date, title, org, tag, filename, file_path, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                payload["member_key"], payload.get("visit_id"), payload["date"], payload["title"],
-                payload.get("org"), payload.get("tag"), payload.get("filename"), payload.get("file_path"), payload.get("notes"),
-            ),
-        )
-        return row_to_dict(conn.execute("SELECT * FROM attachments WHERE id = ?", (cur.lastrowid,)).fetchone())
 
 
 def _attachment(attachment_id: int) -> dict:
@@ -166,59 +113,6 @@ def attachment_text(attachment_id: int) -> PlainTextResponse:
     if path.suffix.lower() not in {".md", ".txt", ".csv", ".json"}:
         raise HTTPException(status_code=415, detail="该附件不是可文本预览的文件")
     return PlainTextResponse(path.read_text(encoding="utf-8"))
-
-
-@router.post("/attachments/upload")
-async def upload_attachment(
-    member_key: str = Form(...),
-    date: str = Form(...),
-    title: str = Form(...),
-    org: Optional[str] = Form(None),
-    tag: Optional[str] = Form(None),
-    notes: Optional[str] = Form(None),
-    visit_id: Optional[str] = Form(None),
-    file: UploadFile = File(...),
-) -> dict:
-    member_key = member_key.strip()
-    title = title.strip()
-    date = date.strip()
-    if not member_key:
-        raise HTTPException(status_code=422, detail="member_key 不能为空")
-    if not title:
-        raise HTTPException(status_code=422, detail="附件标题不能为空")
-    if not date:
-        raise HTTPException(status_code=422, detail="附件日期不能为空")
-
-    parsed_visit_id = _parse_visit_id(visit_id)
-    _validate_member_and_visit(member_key, parsed_visit_id)
-
-    filename = _safe_filename(file.filename)
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=400, detail="文件为空")
-    if len(content) > MAX_ATTACHMENT_BYTES:
-        raise HTTPException(status_code=413, detail="附件大小不能超过 20MB")
-
-    storage_dir = _attachment_storage_dir(member_key)
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    stored_path = storage_dir / f"{uuid4().hex[:12]}_{filename}"
-    stored_path.write_bytes(content)
-
-    try:
-        return _insert_attachment_row({
-            "member_key": member_key,
-            "visit_id": parsed_visit_id,
-            "date": date,
-            "title": title,
-            "org": org,
-            "tag": tag,
-            "filename": filename,
-            "file_path": _stored_file_path(stored_path),
-            "notes": notes,
-        })
-    except Exception:
-        stored_path.unlink(missing_ok=True)
-        raise
 
 
 @router.post("/attachments")

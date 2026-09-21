@@ -17,7 +17,6 @@ class SystemSettingsTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         os.environ["HEALTH_VAULT_HOME"] = self.temp.name
         os.environ["HEALTH_DB_PATH"] = str(Path(self.temp.name) / "health.db")
-        os.environ["HEALTH_APP_PASSWORD"] = "test-family-password"
         os.environ["HEALTH_DISABLE_AGENT_RUNTIME"] = "1"
         import database
         database.BASE_DIR = Path(self.temp.name)
@@ -28,39 +27,14 @@ class SystemSettingsTest(unittest.TestCase):
         self.app = app
 
     def tearDown(self):
-        for key in ("HEALTH_VAULT_HOME", "HEALTH_DB_PATH", "HEALTH_APP_PASSWORD", "HEALTH_DISABLE_AGENT_RUNTIME", "HEALTH_HOST"):
+        for key in ("HEALTH_VAULT_HOME", "HEALTH_DB_PATH", "HEALTH_DISABLE_AGENT_RUNTIME", "HEALTH_HOST"):
             os.environ.pop(key, None)
         self.temp.cleanup()
-
-    def test_password_change_rotates_sessions_and_layers_over_env(self):
-        with TestClient(self.app) as client:
-            login = client.post("/api/auth/login", json={"password": "test-family-password"})
-            self.assertEqual(login.status_code, 200)
-            self.assertEqual(client.get("/api/meta").status_code, 200)
-
-            change = client.post("/api/settings/password", json={
-                "current_password": "test-family-password",
-                "new_password": "a",
-            })
-            self.assertEqual(change.status_code, 200)
-            self.assertIsNotNone(change.json().get("warning"))  # env var still set, so file password not yet active
-
-            # Session key was rotated: the cookie issued before the change is now invalid,
-            # even though the env var still controls the active password.
-            self.assertEqual(client.get("/api/meta").status_code, 401)
-            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
-
-            # Once the env var is out of the picture, the file-based password takes over.
-            os.environ.pop("HEALTH_APP_PASSWORD")
-            client.post("/api/auth/logout")
-            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 401)
-            self.assertEqual(client.post("/api/auth/login", json={"password": "a"}).status_code, 200)
 
     def test_mineru_status_returns_only_safe_token_state(self):
         version = subprocess.CompletedProcess(["mineru-open-api", "version"], 0, stdout="mineru-open-api version v0.5.3\n")
         auth_show = subprocess.CompletedProcess(["mineru-open-api", "auth", "--show"], 0, stdout="Token source: config\nToken: private-value\n")
         with TestClient(self.app) as client:
-            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
             with patch("services.mineru.command_path", return_value="/test/mineru-open-api"), patch("services.mineru._managed_token", return_value=None), patch("services.mineru.subprocess.run", side_effect=[version, auth_show]):
                 response = client.get("/api/settings/mineru")
         self.assertEqual(response.status_code, 200)
@@ -71,7 +45,6 @@ class SystemSettingsTest(unittest.TestCase):
         token = "token-that-must-never-appear-in-a-response"
         safe_status = {"installed": True, "version": "v0.5.3", "token_configured": True, "token_source": "health_vault", "secure_storage_available": True, "mode": "flash"}
         with TestClient(self.app) as client:
-            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
             with patch("routers.settings.mineru.save_managed_token") as save_token, patch("routers.settings.mineru.verify_managed_token", return_value=True), patch("routers.settings.mineru.status", return_value=safe_status):
                 response = client.post("/api/settings/mineru/token", json={"token": token})
         self.assertEqual(response.status_code, 200)
@@ -79,10 +52,13 @@ class SystemSettingsTest(unittest.TestCase):
         self.assertEqual(response.json(), safe_status)
         self.assertNotIn(token, response.text)
 
-    def test_mineru_token_endpoints_require_login(self):
+    def test_mineru_token_endpoints_are_available_without_login(self):
+        # 本机无鉴权：接口直接可用，但仍不得回显 token。
         with TestClient(self.app) as client:
-            self.assertEqual(client.post("/api/settings/mineru/token", json={"token": "a" * 16}).status_code, 401)
-            self.assertEqual(client.delete("/api/settings/mineru/token").status_code, 401)
+            with patch("routers.settings.mineru.save_managed_token") as save_token, patch("routers.settings.mineru.verify_managed_token", return_value=True), patch("routers.settings.mineru.status", return_value={"token_configured": True}):
+                response = client.post("/api/settings/mineru/token", json={"token": "a" * 16})
+        self.assertEqual(response.status_code, 200)
+        save_token.assert_called_once()
 
     def test_resolved_host_prefers_env_over_file(self):
         from services import system_settings
@@ -101,15 +77,12 @@ class SystemSettingsTest(unittest.TestCase):
         with patch("services.system_settings.detect_tailscale", return_value={"installed": True, "connected": False, "ip": None}):
             self.assertIsNone(system_settings.tailscale_bind_host())
 
-    def test_remote_access_requires_an_active_tailscale_ip(self):
-        from services import system_settings
+    def test_remote_access_is_disabled_even_with_active_tailscale_ip(self):
+        # 远程访问已停用：即使检测到 Tailscale，开远程也必须拒绝（Tailscale 检测函数本身保留）。
         with TestClient(self.app) as client:
-            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
             with patch("services.system_settings.tailscale_bind_host", return_value="100.90.80.70"):
-                enabled = client.post("/api/settings/host", json={"enable_remote": True})
-            self.assertEqual(enabled.status_code, 200)
-            self.assertEqual(enabled.json()["host"], "100.90.80.70")
-            self.assertEqual(system_settings.load_settings()["host"], "100.90.80.70")
+                refused = client.post("/api/settings/host", json={"enable_remote": True})
+            self.assertEqual(refused.status_code, 409)
             with patch("services.system_settings.tailscale_bind_host", return_value=None):
                 refused = client.post("/api/settings/host", json={"enable_remote": True})
             self.assertEqual(refused.status_code, 409)
@@ -160,7 +133,6 @@ class SystemSettingsTest(unittest.TestCase):
 
     def test_bind_warning_surfaced_in_system_settings(self):
         with TestClient(self.app) as client:
-            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
             response = client.get("/api/settings/system")
             self.assertIsNone(response.json().get("bind_warning"))
             os.environ["HEALTH_BOUND_WARNING"] = "Tailscale 未连接，暂以本机模式启动"
@@ -172,7 +144,6 @@ class SystemSettingsTest(unittest.TestCase):
 
     def test_restart_endpoint_triggers_lifecycle_restart(self):
         with TestClient(self.app) as client:
-            self.assertEqual(client.post("/api/auth/login", json={"password": "test-family-password"}).status_code, 200)
             with patch("lifecycle.request_restart", return_value=4242) as request_restart:
                 response = client.post("/api/settings/restart")
         self.assertEqual(response.status_code, 200)
@@ -181,9 +152,12 @@ class SystemSettingsTest(unittest.TestCase):
         self.assertEqual(response.json()["pending_host"], "127.0.0.1")
         request_restart.assert_called_once_with()
 
-    def test_restart_endpoint_requires_login(self):
+    def test_restart_endpoint_is_registered(self):
         with TestClient(self.app) as client:
-            self.assertEqual(client.post("/api/settings/restart").status_code, 401)
+            paths = client.get("/openapi.json").json()["paths"]
+        self.assertIn("/api/settings/restart", paths)
+        self.assertIn("/api/settings/system", paths)
+        self.assertNotIn("/api/settings/password", paths)  # 登录鉴权已取消
 
     def test_windows_autostart_script_allows_empty_standard_output(self):
         from services import system_settings

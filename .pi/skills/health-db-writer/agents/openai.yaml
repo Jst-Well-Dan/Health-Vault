@@ -1,0 +1,4 @@
+interface:
+  display_name: "Health DB Writer"
+  short_description: "Safe health database imports."
+  default_prompt: "Use this skill to validate, dry-run, import, and verify health database records in this project."

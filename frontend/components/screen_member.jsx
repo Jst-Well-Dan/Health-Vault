@@ -122,6 +122,8 @@ const reportFromVisit = (visit, attachment) => ({
   severity: visit.severity,
   type: visit.type || '就医',
   chiefComplaint: visit.chief_complaint,
+  diagCount: (visit.diagnosis || []).length,
+  kind: 'visit',
   abn: (visit.diagnosis || []).length ? visit.diagnosis : [visit.notes || '已记录'],
   fullNote: visit.note_full,
   file: attachment?.file || visit.source_file || `visit-${visit.id}`,
@@ -136,6 +138,7 @@ const reportFromAttachment = (a) => ({
   t: a.title,
   org: a.org || '附件',
   tag: a.tag || '其他',
+  kind: 'attachment',
   abn: [a.notes || a.tag || '已归档'],
   file: a.filename || a.file_path || `attachment-${a.id}`,
   filePath: a.file_path,
@@ -770,8 +773,6 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
   const [tab, setTab] = React.useState('概览');
   const [detail, setDetail] = React.useState(null);
   const [editor, setEditor] = React.useState(null);
-  const [reportImportOpen, setReportImportOpen] = React.useState(false);
-  const [attachmentUploadOpen, setAttachmentUploadOpen] = React.useState(false);
   const [attachmentEditor, setAttachmentEditor] = React.useState(null);
   const [data, setData] = React.useState({
     visits: [],
@@ -1042,7 +1043,6 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
           </div>
           <div className="member-hero__actions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <Btn ghost onClick={() => onEditMember?.(member)}>编辑资料</Btn>
-            <Btn onClick={() => setReportImportOpen(true)}>+ 上传报告/附件</Btn>
             <Btn primary onClick={openChooser}>+ 新增记录</Btn>
           </div>
         </div>
@@ -1075,7 +1075,7 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
               {!isCat && tab === '体检报告' && <TabCheckup data={data} memberKey={member.key} reports={visitReports.filter(isCheckupReport)} onOpen={setDetail} onAddLab={() => openCreate('lab')} onEditLab={(item) => editItem('lab', item)} onDeleteLab={deleteLab} onEditVisit={editVisitId} />}
               {!isCat && tab === '就医记录' && <TabReports reports={visitReports} kind="就医" onOpen={setDetail} onAdd={() => openCreate('visit')} onEdit={editVisitReport} onDelete={deleteVisit} />}
               {!isCat && tab === '用药' && <TabMeds meds={data.meds} visits={data.visits} onAdd={() => openCreate('med')} onEdit={(item) => editItem('med', item)} onStop={stopMed} onDelete={deleteMed} />}
-              {!isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onAddAttachment={() => setAttachmentUploadOpen(true)} onImport={() => setReportImportOpen(true)} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
+              {!isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
               {!isCat && tab === '提醒' && <TabReminders items={data.reminders} onAdd={() => openCreate('reminder')} onEdit={(item) => editItem('reminder', item)} onDone={completeReminder} onSkip={skipReminder} onDelete={deleteReminder} />}
 
               {isCat && tab === '概览' && (
@@ -1095,24 +1095,11 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
               {isCat && tab === '就医记录' && <TabReports reports={visitReports} kind="就医" onOpen={setDetail} onAdd={() => openCreate('visit')} onEdit={editVisitReport} onDelete={deleteVisit} />}
               {isCat && tab === '用药' && <TabMeds meds={data.meds} visits={data.visits} onAdd={() => openCreate('med')} onEdit={(item) => editItem('med', item)} onStop={stopMed} onDelete={deleteMed} />}
               {isCat && tab === '体重趋势' && <TabPetWeight member={member} weights={data.weights} onAdd={() => openCreate('weight')} onDelete={deleteWeight} />}
-              {isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onAddAttachment={() => setAttachmentUploadOpen(true)} onImport={() => setReportImportOpen(true)} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
+              {isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
               {isCat && tab === '提醒' && <TabReminders items={data.reminders.filter(r => !r.done)} onAdd={() => openCreate('reminder')} onEdit={(item) => editItem('reminder', item)} onDone={completeReminder} onSkip={skipReminder} onDelete={deleteReminder} />}
             </>
           )}
         </div>
-
-        {reportImportOpen && <ReportImportModal
-          member={member}
-          onClose={() => setReportImportOpen(false)}
-          onImported={async () => { await loadMemberData(); await onDataChanged?.(); }}
-        />}
-
-        {attachmentUploadOpen && <AttachmentUploadModal
-          member={member}
-          visits={data.visits}
-          onClose={() => setAttachmentUploadOpen(false)}
-          onUploaded={async () => { await loadMemberData(); await onDataChanged?.(); }}
-        />}
 
         {attachmentEditor && <AttachmentEditorModal
           attachment={attachmentEditor}
@@ -1240,14 +1227,7 @@ const DailyEditor = ({ editor, member, isPetMember, visits = [], saving, onClose
         </div>
         {editor.type === 'choose' && (
           <div className="daily-choice-grid">
-            <button className="daily-choice" onClick={() => onChoose('visit')}>
-              <span>就诊记录</span>
-              <small>门诊、复诊、体检或其他接触记录</small>
-            </button>
-            <button className="daily-choice" onClick={() => onChoose('lab')}>
-              <span>化验指标</span>
-              <small>手动补录单项检验值，可关联就诊</small>
-            </button>
+            {/* 就诊记录与化验指标仅由 Agent 写入，已移除手动入口 */}
             <button className="daily-choice" onClick={() => onChoose('reminder')}>
               <span>提醒</span>
               <small>复诊、复查、驱虫、疫苗等</small>
@@ -1611,9 +1591,8 @@ const TabOverview = ({ member, labs, visits, meds = [], reminders = [], attachme
                     <div className="mono timeline-meta">{item.org || '医疗机构'} · {relationText(item.abn, '已记录')}</div>
                     <div className="timeline-tags">
                       <Chip variant="accent">{item.tag || item.type || '就医'}</Chip>
-                      {reportChipLabels(item).map((tag, i) => (
-                        <Chip key={`${item.id}-${i}`} variant={severityBadgeVariant(item.severity)}>{tag}</Chip>
-                      ))}
+                      {item.severity && <Chip variant={severityBadgeVariant(item.severity)}>{item.severity}</Chip>}
+                      {(item.abn || []).length > 0 && <Chip>异常 {(item.abn || []).length} 项</Chip>}
                     </div>
                   </div>
                   <Btn ghost onClick={() => onOpen && onOpen(item)}>查看 →</Btn>
@@ -1763,8 +1742,10 @@ const CheckupLabRow = ({ item, memberKey, autoExpanded, onEdit, onDelete }) => {
         </div>
         <div className="mono ck-lab-unit">{item.u}</div>
         <div className="mono ck-lab-ref">{item.ref}</div>
-        {onEdit && item.raw && <Btn ghost onClick={(e) => { e.stopPropagation(); onEdit(item.raw); }}>编辑</Btn>}
-        {onDelete && item.raw && <Btn ghost onClick={(e) => { e.stopPropagation(); onDelete(item.raw); }}>删除</Btn>}
+        <div className="ck-lab-actions">
+          {onEdit && item.raw && <Btn ghost onClick={(e) => { e.stopPropagation(); onEdit(item.raw); }}>编辑</Btn>}
+          {onDelete && item.raw && <Btn ghost onClick={(e) => { e.stopPropagation(); onDelete(item.raw); }}>删除</Btn>}
+        </div>
         <div className="mono ck-lab-chevron">{expanded ? '▲' : '▼'}</div>
       </div>
       {expanded && (
@@ -1815,8 +1796,7 @@ const TabCheckup = ({ data, memberKey, reports, onOpen, onAddLab, onEditLab, onD
     return (
       <div>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <DashLabel right="可手动补录单项指标">体检 / 化验</DashLabel>
-          <Btn primary onClick={onAddLab}>+ 新增化验</Btn>
+          <DashLabel right="由 Agent 自动写入">体检 / 化验</DashLabel>
         </div>
         <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>暂无体检报告记录</div>
       </div>
@@ -1826,8 +1806,7 @@ const TabCheckup = ({ data, memberKey, reports, onOpen, onAddLab, onEditLab, onD
   return (
     <div className="checkup-tab">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 10 }}>
-        <DashLabel right="可手动补录单项指标">体检 / 化验</DashLabel>
-        <Btn primary onClick={onAddLab}>+ 新增化验</Btn>
+        <DashLabel right="由 Agent 自动写入">体检 / 化验</DashLabel>
       </div>
       <div className="checkup-selector">
         {checkupReports.map(r => (
@@ -1889,8 +1868,7 @@ const TabCheckup = ({ data, memberKey, reports, onOpen, onAddLab, onEditLab, onD
 const TabReports = ({ reports, kind, onOpen, onAdd, onEdit, onDelete }) => (
   <div>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-      <DashLabel right={`${reports.length} 条`}>全部{kind}记录</DashLabel>
-      <Btn primary onClick={onAdd}>+ 新增就诊</Btn>
+      <DashLabel right={`${reports.length} 条 · 由 Agent 自动写入`}>全部{kind}记录</DashLabel>
     </div>
     {reports.length === 0 ? (
       <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>暂无 {kind} 记录</div>
@@ -1903,10 +1881,10 @@ const TabReports = ({ reports, kind, onOpen, onAdd, onEdit, onDelete }) => (
               <div style={{ fontFamily: 'Caveat, cursive', fontSize: 20, fontWeight: 700 }}>{r.t}</div>
               <span className="mono" style={{ color: 'var(--ink-soft)' }}>{r.org} · {r.file}</span>
             </div>
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              {(reportChipLabels(r)).map((a, j) => (
-                <Chip key={j} variant={severityBadgeVariant(r.severity)}>{a}</Chip>
-              ))}
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              {r.severity && <Chip variant={severityBadgeVariant(r.severity)}>{r.severity}</Chip>}
+              {r.kind === 'visit' && r.diagCount > 0 && <Chip>异常 {r.diagCount} 项</Chip>}
+              {r.kind === 'attachment' && <Chip>{r.tag || '附件'}</Chip>}
             </div>
             <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
               {onEdit && <Btn ghost onClick={() => onEdit(r)}>编辑</Btn>}
@@ -1919,11 +1897,6 @@ const TabReports = ({ reports, kind, onOpen, onAdd, onEdit, onDelete }) => (
     )}
   </div>
 );
-
-const reportChipLabels = (report) => {
-  if (report.tag === '就医' && report.chiefComplaint) return [report.chiefComplaint];
-  return (report.abn || []).slice(0, 2);
-};
 
 const SEVERITY_BADGE_VARIANTS = {
   '严重': 'severity-severe',
@@ -2202,7 +2175,7 @@ const TabMeds = ({ meds, visits = [], onAdd, onEdit, onStop, onDelete }) => {
   );
 };
 
-const TabAttachments = ({ reports, onOpen, onAddAttachment, onImport, onEditAttachment, onDeleteAttachment }) => {
+const TabAttachments = ({ reports, onOpen, onEditAttachment, onDeleteAttachment }) => {
   const stopCardAction = (event, action) => {
     event.stopPropagation();
     action();
@@ -2211,13 +2184,9 @@ const TabAttachments = ({ reports, onOpen, onAddAttachment, onImport, onEditAtta
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <DashLabel right={`${reports.length} 份文件`}>附件库</DashLabel>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {onAddAttachment && <Btn onClick={onAddAttachment}>+ 添加附件</Btn>}
-          {onImport && <Btn primary onClick={onImport}>+ 上传报告/附件</Btn>}
-        </div>
       </div>
       <div className="mono" style={{ color: 'var(--ink-soft)', fontSize: 11, margin: '-2px 0 10px' }}>
-“添加附件”只归档文件并新增附件记录；“上传报告/附件”会进入报告解析和结构化写入流程。移除记录默认保留磁盘文件，只有“删除记录+文件”会尝试删除当前数据目录内的原始归档文件。
+附件由健康助手（终端 pi + skill）按 incoming/ 里的报告归档后写入；移除记录默认保留磁盘文件，只有“删除记录+文件”会尝试删除当前数据目录内的原始归档文件。
       </div>
       <div className="attachment-grid">
         {reports.map(r => (
@@ -2565,8 +2534,7 @@ const TabVax = ({ labs, attachments, onAddLab }) => {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <DashLabel right={`${antibodyLabs.length} 项`}>疫苗与抗体</DashLabel>
-        <Btn primary onClick={onAddLab}>+ 新增化验</Btn>
+        <DashLabel right={`${antibodyLabs.length} 项 · 由 Agent 自动写入`}>疫苗与抗体</DashLabel>
       </div>
       <div className="row-list">
         {antibodyLabs.map(l => (

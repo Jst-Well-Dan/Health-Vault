@@ -13,9 +13,11 @@ sys.path.insert(0, str(ROOT / "backend"))
 import database  # noqa: E402
 from database import get_conn, init_db  # noqa: E402
 from models import AvatarPresetApply, MemberCreate, MemberUpdate  # noqa: E402
+from routers import members as members_module  # noqa: E402
 from routers.members import (  # noqa: E402
     apply_preset_avatar,
     create_member,
+    get_avatar,
     get_avatar_preset,
     get_member,
     list_avatar_presets,
@@ -30,12 +32,19 @@ class MembersApiTest(unittest.TestCase):
         database.DB_PATH = Path(self.temp.name) / "health.db"
         init_db()
         self._prev_preset_env = os.environ.get("HEALTH_AVATARS_DIR")
+        # 头像现在落在仓库根目录 public/，测试用环境变量改到临时目录，避免污染真实照片。
+        self._prev_public_env = os.environ.get("HEALTH_PUBLIC_DIR")
+        os.environ["HEALTH_PUBLIC_DIR"] = str(Path(self.temp.name) / "public")
 
     def tearDown(self):
         if self._prev_preset_env is None:
             os.environ.pop("HEALTH_AVATARS_DIR", None)
         else:
             os.environ["HEALTH_AVATARS_DIR"] = self._prev_preset_env
+        if self._prev_public_env is None:
+            os.environ.pop("HEALTH_PUBLIC_DIR", None)
+        else:
+            os.environ["HEALTH_PUBLIC_DIR"] = self._prev_public_env
         self.temp.cleanup()
 
     def _preset_dir(self) -> Path:
@@ -65,23 +74,26 @@ class MembersApiTest(unittest.TestCase):
         self.assertEqual(member["sex"], "妹妹")
         self.assertNotIn("chip_id", member)
 
-    def test_member_avatar_is_served_from_private_avatar_directory(self):
+    def test_member_avatar_is_served_from_root_public_directory(self):
         create_member(MemberCreate(key="avatar-user", name="头像用户", species="human"))
-        avatar_dir = database.DB_PATH.parent / "avatars"
-        avatar_dir.mkdir()
+        avatar_dir = Path(os.environ["HEALTH_PUBLIC_DIR"])
+        avatar_dir.mkdir(parents=True, exist_ok=True)
         (avatar_dir / "avatar-user.png").write_bytes(b"avatar")
 
         member = get_member("avatar-user")
         self.assertTrue(member["avatar_url"].startswith("/api/members/avatar-user/avatar?v="))
+        self.assertEqual(get_avatar("avatar-user").path, avatar_dir / "avatar-user.png")
 
-    def test_legacy_public_avatar_remains_available_through_authenticated_api(self):
-        create_member(MemberCreate(key="legacy-user", name="旧头像用户", species="human"))
-        legacy_dir = database.DB_PATH.parent / "public"
-        legacy_dir.mkdir()
-        (legacy_dir / "legacy-user.png").write_bytes(b"legacy avatar")
+    def test_avatar_resolution_prefers_the_first_extension(self):
+        """同名多格式时解析必须稳定（曾经是 set，顺序随机）。"""
+        create_member(MemberCreate(key="multi-user", name="多格式用户", species="human"))
+        avatar_dir = Path(os.environ["HEALTH_PUBLIC_DIR"])
+        avatar_dir.mkdir(parents=True, exist_ok=True)
+        (avatar_dir / "multi-user.webp").write_bytes(b"webp")
+        (avatar_dir / "multi-user.png").write_bytes(b"png")
 
-        member = get_member("legacy-user")
-        self.assertTrue(member["avatar_url"].startswith("/api/members/legacy-user/avatar?v="))
+        self.assertEqual(get_avatar("multi-user").path.name, "multi-user.png")
+        self.assertEqual(members_module.AVATAR_EXTS[0], ".png")
 
     def test_duplicate_explicit_key_returns_409(self):
         create_member(MemberCreate(key="safe-key_1", name="小白", species="cat"))
@@ -129,7 +141,7 @@ class MembersApiTest(unittest.TestCase):
 
         member = apply_preset_avatar("preset-user", AvatarPresetApply(name="Frame 1.webp"))
         self.assertTrue(member["avatar_url"].startswith("/api/members/preset-user/avatar?v="))
-        target = database.DB_PATH.parent / "avatars" / "preset-user.webp"
+        target = Path(os.environ["HEALTH_PUBLIC_DIR"]) / "preset-user.webp"
         self.assertTrue(target.is_file())
         self.assertEqual(target.read_bytes(), self._webp_bytes())
 
@@ -137,8 +149,8 @@ class MembersApiTest(unittest.TestCase):
         preset_dir = self._preset_dir()
         (preset_dir / "Frame 2.webp").write_bytes(self._webp_bytes())
         create_member(MemberCreate(key="swap-user", name="换头像", species="human"))
-        avatar_dir = database.DB_PATH.parent / "avatars"
-        avatar_dir.mkdir()
+        avatar_dir = Path(os.environ["HEALTH_PUBLIC_DIR"])
+        avatar_dir.mkdir(parents=True, exist_ok=True)
         (avatar_dir / "swap-user.png").write_bytes(b"old png")
 
         member = apply_preset_avatar("swap-user", AvatarPresetApply(name="Frame 2.webp"))

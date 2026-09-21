@@ -10,7 +10,6 @@ from fastapi.testclient import TestClient
 
 
 ROOT = Path(__file__).resolve().parents[1]
-os.environ.setdefault("HEALTH_APP_PASSWORD", "test-family-password")
 sys.path.insert(0, str(ROOT / "backend"))
 
 import database  # noqa: E402
@@ -28,7 +27,6 @@ class BackupsApiTest(unittest.TestCase):
         database.DB_PATH = self.db_path
         init_db()
         self.client = TestClient(app)
-        self.client.post("/api/auth/login", json={"password": "test-family-password"})
 
     def tearDown(self):
         os.environ.pop("HEALTH_VAULT_HOME", None)

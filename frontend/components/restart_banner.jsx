@@ -8,7 +8,7 @@ const _probeBase = (base) => new Promise((resolve) => {
   const timer = setTimeout(() => { img.src = ''; resolve(false); }, 4000);
   img.onload = () => { clearTimeout(timer); resolve(true); };
   img.onerror = () => { clearTimeout(timer); resolve(false); };
-  img.src = `${base}/api/auth/status?t=${Date.now()}`;
+  img.src = `${base}/api/meta?t=${Date.now()}`;
 });
 
 const _waitForServerUp = async (base, timeoutMs) => {

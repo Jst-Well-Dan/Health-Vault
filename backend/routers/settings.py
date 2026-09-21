@@ -6,7 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-import auth
 from services import mineru, system_settings
 
 router = APIRouter(tags=["settings"])
@@ -29,11 +28,6 @@ class HostUpdate(BaseModel):
     enable_remote: bool
 
 
-class PasswordUpdate(BaseModel):
-    current_password: str = Field(min_length=1, max_length=1024)
-    new_password: str = Field(min_length=1, max_length=1024)
-
-
 class AutostartUpdate(BaseModel):
     enabled: bool
 
@@ -50,19 +44,12 @@ class MineruTokenUpdate(BaseModel):
 def get_system_settings() -> dict:
     current_host = _current_bound_host()
     pending_host = system_settings.resolved_host()
-    if os.getenv("HEALTH_APP_PASSWORD"):
-        password_source = "env"
-    elif system_settings.load_settings().get("password_hash"):
-        password_source = "file"
-    else:
-        password_source = "unset"
     return {
         "platform": platform.system(),
         "current_host": current_host,
         "pending_host": pending_host,
         "restart_required": current_host != pending_host,
         "bind_warning": _bind_warning(),
-        "password_source": password_source,
         "autostart_supported": system_settings.autostart_supported(),
         "autostart_enabled": system_settings.autostart_status() if system_settings.autostart_supported() else False,
         "tailscale": system_settings.detect_tailscale(),
@@ -108,9 +95,8 @@ def delete_mineru_token() -> dict:
 def update_host(payload: HostUpdate) -> dict:
     new_host = "127.0.0.1"
     if payload.enable_remote:
-        new_host = system_settings.tailscale_bind_host()
-        if not new_host:
-            raise HTTPException(status_code=409, detail="未检测到已连接的 Tailscale IPv4 地址，不能启用手机访问")
+        # 本机模式下停用远程访问入口；Tailscale 检测函数保留以便将来恢复。
+        raise HTTPException(status_code=409, detail="远程访问（Tailscale）已停用，当前仅支持本机 127.0.0.1")
     system_settings.save_settings({"host": new_host})
     return {"ok": True, "host": new_host, "restart_required": _current_bound_host() != new_host}
 
@@ -123,22 +109,6 @@ def restart_app() -> dict:
 
     pid = lifecycle.request_restart()
     return {"ok": True, "pid": pid, "pending_host": system_settings.resolved_host()}
-
-
-@router.post("/settings/password")
-def update_password(payload: PasswordUpdate, request: Request) -> dict:
-    host = request.client.host if request.client else "unknown"
-    if not auth.login_allowed(host):
-        raise HTTPException(status_code=429, detail="尝试过多，请稍后再试")
-    if not auth.verify_password(payload.current_password, host):
-        raise HTTPException(status_code=401, detail="当前密码错误")
-    system_settings.save_settings({"password_hash": system_settings.hash_password(payload.new_password)})
-    auth.rotate_session_key()
-
-    warning = None
-    if os.getenv("HEALTH_APP_PASSWORD"):
-        warning = "当前仍由环境变量 HEALTH_APP_PASSWORD 控制登录密码，网页修改不会生效，请同时更新或取消该环境变量。"
-    return {"ok": True, "warning": warning}
 
 
 @router.post("/settings/autostart")

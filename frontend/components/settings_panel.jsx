@@ -1,4 +1,4 @@
-function SettingsPanel({ onClose, onSelect, agentAvailable = false }) {
+function SettingsPanel({ onClose, onSelect }) {
   const items = [
     {
       key: 'backup',
@@ -7,18 +7,13 @@ function SettingsPanel({ onClose, onSelect, agentAvailable = false }) {
     },
     {
       key: 'remote',
-      label: '远程访问 (Tailscale)',
-      description: '检测 Tailscale、配置手机访问、修改密码、设置开机自启。',
+      label: '本机与自启',
+      description: '查看本机监听地址、设置开机自启（远程访问已停用）。',
     },
     {
       key: 'mineru',
       label: 'MinerU 报告转换',
       description: '查看转换模式、保存或删除 Token；不会显示已保存的 Token 内容。',
-    },
-    {
-      key: 'ai',
-      label: 'AI 配置',
-      description: '选择健康助手使用的模型，并管理登录方式。',
     },
   ];
 
@@ -35,17 +30,15 @@ function SettingsPanel({ onClose, onSelect, agentAvailable = false }) {
 
         <div className="app-settings-panel__list">
           {items.map(item => {
-            const unavailable = item.key !== 'backup' && item.key !== 'remote' && item.key !== 'mineru' && !agentAvailable;
             return (
               <button
                 key={item.key}
                 className="app-settings-panel__item sketch"
-                disabled={unavailable}
                 onClick={() => onSelect(item.key)}
               >
                 <span>
                   <strong>{item.label}</strong>
-                  <small>{unavailable ? '健康助手不可用' : item.description}</small>
+                  <small>{item.description}</small>
                 </span>
                 <b aria-hidden="true">→</b>
               </button>

@@ -11,7 +11,7 @@
   <link
     href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;600;700&family=Kalam:wght@300;400;700&family=JetBrains+Mono:wght@400;500&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=20260812-restart-banner">
+  <link rel="stylesheet" href="style.css?v=20260920-pi-agent">
 
   <!-- Runtime dependencies are vendored for offline desktop use. Keep this order: React/Babel/libs before JSX. -->
   <script src="vendor/react.development.js"></script>
@@ -25,17 +25,14 @@
   <div id="root"></div>
 
   <script type="text/babel" src="components/primitives.jsx?v=20260426-mobile-modal"></script>
-  <script type="text/babel" src="components/restart_banner.jsx?v=20260812-restart-banner"></script>
+  <script type="text/babel" src="components/restart_banner.jsx?v=20260920-no-auth"></script>
   <script type="text/babel" src="components/member_editor.jsx?v=20260808-avatar-presets"></script>
   <script type="text/babel" src="components/backup_panel.jsx?v=20260803-backups"></script>
-  <script type="text/babel" src="components/settings_panel.jsx?v=20260807-app-settings"></script>
+  <script type="text/babel" src="components/settings_panel.jsx?v=20260920-pi-agent"></script>
   <script type="text/babel" src="components/remote_access_panel.jsx?v=20260807-remote-access"></script>
   <script type="text/babel" src="components/mineru_settings_panel.jsx?v=20260807-mineru-settings"></script>
   <script type="text/babel" src="components/screen_family.jsx?v=20260803-member-management"></script>
-  <script type="text/babel" src="components/report_import.jsx?v=20260807-report-import-form"></script>
-  <script type="text/babel" src="components/attachment_upload.jsx?v=20260803-attachment-upload"></script>
-  <script type="text/babel" src="components/screen_member.jsx?v=20260803-attachment-upload"></script>
-  <script type="text/babel" src="components/agent_panel.jsx?v=20260807-app-settings"></script>
+  <script type="text/babel" src="components/screen_member.jsx?v=20260921-agent-only"></script>
 
   <script type="text/babel" data-presets="react">
 
@@ -70,7 +67,6 @@
       const [remoteAccessOpen, setRemoteAccessOpen] = React.useState(false);
       const [mineruSettingsOpen, setMineruSettingsOpen] = React.useState(false);
       const [settingsOpen, setSettingsOpen] = React.useState(false);
-      const [agentSettingsAction, setAgentSettingsAction] = React.useState(null);
       const [meta, setMeta] = React.useState(null);
 
       React.useEffect(() => {
@@ -222,14 +218,12 @@
             </div>
           </div>
           {settingsOpen && <SettingsPanel
-            agentAvailable={true}
             onClose={() => setSettingsOpen(false)}
             onSelect={(section) => {
               setSettingsOpen(false);
               if (section === 'backup') setBackupOpen(true);
               else if (section === 'remote') setRemoteAccessOpen(true);
               else if (section === 'mineru') setMineruSettingsOpen(true);
-              else setAgentSettingsAction({ section, requestedAt: Date.now() });
             }}
           />}
           {backupOpen && <BackupPanel onClose={() => setBackupOpen(false)} />}
@@ -241,11 +235,6 @@
             member={memberEditor.member}
             onClose={() => setMemberEditor(null)}
             onSaved={handleMemberSaved}
-          />}
-          {meta && <AgentPanel
-            onDataChanged={loadShellData}
-            settingsAction={agentSettingsAction}
-            onSettingsActionHandled={() => setAgentSettingsAction(null)}
           />}
         </div>
       );

@@ -14,6 +14,14 @@ venv.bak/
 # Private runtime data — never commit health records, reports, attachments, backups, credentials, or user avatars.
 data/
 
+# 成员头像（家人照片，绝不提交）
+public/
+
+# 报告收件箱与转换中间产物（含原始报告，绝不提交）
+incoming/*
+!incoming/.gitkeep
+outgoing/
+
 # Frontend
 node_modules/
 dist/
@@ -49,3 +57,6 @@ data_incoming/
 报告pdf/
 报告md/
 文案.md
+
+# 测试缓存
+.pytest_cache/

@@ -1329,11 +1329,21 @@ hr.dash { border: none; border-top: 1.5px dashed var(--line); margin: 10px 0; }
 }
 .ck-lab-row {
   display: grid;
-  grid-template-columns: minmax(96px, 150px) minmax(0, 1fr) minmax(36px, max-content) minmax(48px, max-content) 20px;
+  grid-template-columns: minmax(96px, 150px) minmax(0, 1fr) minmax(36px, max-content) minmax(48px, max-content) max-content 20px;
   gap: 12px;
   align-items: start;
   padding: 9px 0;
   cursor: pointer;
+}
+.ck-lab-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+.ck-lab-actions .btn {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .ck-lab-row--abn {
   background: color-mix(in oklab, var(--danger) 4%, transparent);
@@ -1372,15 +1382,19 @@ hr.dash { border: none; border-top: 1.5px dashed var(--line); margin: 10px 0; }
 
 @media (max-width: 760px) {
   .ck-lab-row {
-    grid-template-columns: minmax(84px, 120px) minmax(0, 1fr) 20px;
+    grid-template-columns: minmax(84px, 120px) minmax(0, 1fr) max-content 20px;
+  }
+  .ck-lab-actions {
+    grid-column: 3;
+    grid-row: 1;
   }
   .ck-lab-unit,
   .ck-lab-ref {
-    grid-column: 2;
+    grid-column: 2 / span 3;
     padding-top: 0;
   }
   .ck-lab-chevron {
-    grid-column: 3;
+    grid-column: 4;
     grid-row: 1;
   }
 }
@@ -2156,6 +2170,17 @@ hr.dash { border: none; border-top: 1.5px dashed var(--line); margin: 10px 0; }
 .report-import-member select { min-height: 40px; padding: 7px; border: 1.5px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); }
 .report-import-member small { color: var(--ink-soft); }
 .report-import-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
+.report-import-filelist { margin: 12px 0; border: 1.5px solid var(--line); border-radius: 8px; background: var(--paper); }
+.report-import-filelist-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-bottom: 1px dashed var(--rule); color: var(--ink-soft); font-size: 12px; }
+.report-import-fileclear { border: 0; background: transparent; color: var(--ink-soft); font-size: 12px; cursor: pointer; text-decoration: underline; }
+.report-import-fileitem { display: flex; align-items: center; gap: 8px; padding: 6px 10px; }
+.report-import-fileitem + .report-import-fileitem { border-top: 1px dashed var(--rule); }
+.report-import-fileitem img { width: 40px; height: 40px; object-fit: cover; border: 1px solid var(--rule); border-radius: 4px; background: var(--bg); }
+.report-import-filepdf { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border: 1px solid var(--rule); border-radius: 4px; font-size: 10px; color: var(--ink-soft); }
+.report-import-fileindex { flex: 0 0 18px; color: var(--ink-soft); font-size: 11px; }
+.report-import-filename { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+.report-import-fileitem .lab-remove { padding: 2px 6px; line-height: 1.2; }
+.report-import-fileitem .lab-remove:disabled { opacity: 0.35; cursor: default; }
 .report-import-label { display: block; margin: 16px 0 7px; color: var(--ink-soft); font-size: 13px; }
 .report-import-status { margin-top: 14px; color: var(--ink-soft); }
 .report-import-error { margin-top: 14px; padding: 10px; border: 1px solid var(--danger); color: var(--danger); background: color-mix(in oklab, var(--danger) 9%, var(--paper)); }
@@ -2241,6 +2266,10 @@ hr.dash { border: none; border-top: 1.5px dashed var(--line); margin: 10px 0; }
 .agent-diff pre { min-height: 130px; max-height: 45vh; overflow: auto; padding: 10px; border: 1px solid var(--line); background: var(--bg); white-space: pre-wrap; overflow-wrap: anywhere; }
 .agent-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .agent-actions .primary { background: var(--ink); color: var(--paper); }
+.agent-proposal { margin: 0 12px 10px; padding: 12px; border: 1.5px solid var(--line); border-radius: 10px; background: color-mix(in oklab, var(--accent-2) 18%, var(--paper)); }
+.agent-proposal-head { font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: .04em; }
+.agent-proposal-summary { margin: 6px 0 10px; font-size: 13px; line-height: 1.6; }
+.agent-proposal .agent-diff pre { min-height: 90px; max-height: 32vh; }
 .agent-settings label { display: grid; gap: 5px; margin: 12px 0; }
 .agent-settings select, .agent-settings input { min-height: 40px; padding: 7px; border: 1.5px solid var(--line); border-radius: 7px; background: var(--bg); color: var(--ink); }
 .agent-settings label.agent-settings__toggle { display: flex; align-items: flex-start; gap: 10px; cursor: pointer; }

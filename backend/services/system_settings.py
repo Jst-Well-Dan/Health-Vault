@@ -1,11 +1,8 @@
-"""Persisted local settings for remote access: listen host, password hash, autostart."""
+"""Persisted local settings for the listen host and autostart."""
 
-import hashlib
-import hmac
 import json
 import os
 import platform
-import secrets
 import shutil
 import subprocess
 from pathlib import Path
@@ -18,12 +15,17 @@ _WINDOWS_SCRIPTS_DIR = _PROJECT_ROOT / "scripts" / "windows"
 _MACOS_SCRIPTS_DIR = _PROJECT_ROOT / "scripts" / "macos"
 _TASK_NAME = "HealthVaultWeb"
 _LAUNCHD_LABEL = "com.healthvault.web"
-_PBKDF2_ITERATIONS = 200_000
+LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 
-# In-memory cache: password_is_configured() runs on every request via the auth
-# middleware, so load_settings() must not hit disk each time. Invalidated on
-# save_settings() and (for tests that swap database.BASE_DIR) invalidate_cache().
+# In-memory cache: the settings payload is read on every request by the UI,
+# so load_settings() must not hit disk each time. Invalidated on save_settings()
+# and (for tests that swap database.BASE_DIR) invalidate_cache().
 _cache: dict[str, Any] | None = None
+
+
+def is_loopback_host(host: str | None) -> bool:
+    """本应用没有登录凭据，因此只允许监听/访问本机地址。"""
+    return (host or "") in LOOPBACK_HOSTS
 
 
 def _settings_path() -> Path:
@@ -94,23 +96,6 @@ def resolve_bind_host_with_heal() -> tuple[str, str | None]:
             host = "127.0.0.1"
             warning = "Tailscale 未连接，暂以本机模式启动；连接后可在设置中一键重启恢复手机访问"
     return host, warning
-
-
-def hash_password(password: str) -> str:
-    salt = secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
-    return f"{salt.hex()}:{digest.hex()}"
-
-
-def verify_password_hash(password: str, stored: str) -> bool:
-    try:
-        salt_hex, digest_hex = stored.split(":", 1)
-        salt = bytes.fromhex(salt_hex)
-        expected = bytes.fromhex(digest_hex)
-    except (ValueError, TypeError):
-        return False
-    actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, _PBKDF2_ITERATIONS)
-    return hmac.compare_digest(actual, expected)
 
 
 def _tailscale_binary() -> str | None:

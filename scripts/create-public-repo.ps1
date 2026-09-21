@@ -11,7 +11,7 @@ if (Test-Path $targetPath) {
 
 New-Item -ItemType Directory -Path $targetPath | Out-Null
 $files = & git -C $sourcePath ls-files --cached --others --exclude-standard
-$excluded = '^(data/|\.pi-subagents/|\.stfolder/)|(^|/)\.DS_Store$|(^|/)\.env(?:\.|$)|\.sync-conflict-'
+$excluded = '^(data/|public/|incoming/|outgoing/|\.pi-subagents/|\.stfolder/)|(^|/)\.DS_Store$|(^|/)\.env(?:\.|$)|\.sync-conflict-'
 $copied = 0
 foreach ($relativePath in $files) {
     if ($relativePath -match $excluded) { continue }

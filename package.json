@@ -8,19 +8,8 @@
     "python": ">=3.10"
   },
   "scripts": {
-    "check": "tsc --noEmit",
-    "compile": "tsc",
-    "start": "npm run compile && node scripts/run-python.mjs backend/run_backend.py",
-    "test": "node scripts/run-python.mjs -m unittest discover -s tests -v && npm run check",
-    "smoke": "npm run compile && node tests/web-smoke.mjs"
-  },
-  "dependencies": {
-    "@earendil-works/pi-agent-core": "0.83.0",
-    "@earendil-works/pi-ai": "0.83.0",
-    "typebox": "1.3.7"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.0",
-    "typescript": "^5.9.0"
+    "start": "node scripts/run-python.mjs backend/run_backend.py",
+    "test": "node scripts/run-python.mjs -m unittest discover -s tests -v",
+    "smoke": "node tests/web-smoke.mjs"
   }
 }

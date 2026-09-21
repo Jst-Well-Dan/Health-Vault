@@ -8,7 +8,9 @@ from typing import Any
 
 
 BASE_DIR = Path(os.getenv("HEALTH_VAULT_HOME", Path(__file__).resolve().parent.parent)).resolve()
+REPO_ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = BASE_DIR / "data" / "log"
+MOCK_DB_PATH = REPO_ROOT / "tests" / "fixtures" / "health_mock.db"
 
 WRITE_SQL_RE = re.compile(r"^\s*(INSERT|UPDATE|DELETE|REPLACE)\b", re.IGNORECASE)
 TABLE_PATTERNS = (
@@ -25,7 +27,8 @@ def is_mock_mode() -> bool:
 
 def _default_db_path() -> Path:
     if is_mock_mode():
-        return BASE_DIR / "data" / "mock" / "health_mock.db"
+        # 模拟库是随仓库分发的测试夹具，不跟随 HEALTH_VAULT_HOME。
+        return MOCK_DB_PATH
     return BASE_DIR / "data" / "health.db"
 
 

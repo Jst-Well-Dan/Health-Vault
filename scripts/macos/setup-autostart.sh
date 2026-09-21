@@ -6,7 +6,6 @@ PROJECT_ROOT="${1:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
 LABEL="com.healthvault.web"
 PLIST_PATH="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="${HOME}/Library/Logs/HealthVaultWeb"
-KEYCHAIN_SERVICE="HealthVaultWeb"
 PYTHON_BIN="${HEALTH_PYTHON:-${PROJECT_ROOT}/.venv/bin/python}"
 
 if [[ ! -x "${PYTHON_BIN}" ]]; then
@@ -14,17 +13,8 @@ if [[ ! -x "${PYTHON_BIN}" ]]; then
   exit 1
 fi
 
-if [[ -z "${HEALTH_APP_PASSWORD:-}" ]]; then
-  read -r -s -p "设置家庭共享密码（至少 12 个字符）：" HEALTH_APP_PASSWORD
-  echo
-fi
-if [[ ${#HEALTH_APP_PASSWORD} -lt 12 ]]; then
-  echo "家庭共享密码至少需要 12 个字符。" >&2
-  exit 1
-fi
-
+# 不写入任何密码或环境变量。
 mkdir -p "${HOME}/Library/LaunchAgents" "${LOG_DIR}"
-security add-generic-password -U -a "${USER}" -s "${KEYCHAIN_SERVICE}" -w "${HEALTH_APP_PASSWORD}"
 
 cat >"${PLIST_PATH}" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
