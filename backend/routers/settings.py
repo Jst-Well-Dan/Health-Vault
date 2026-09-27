@@ -11,11 +11,25 @@ from services import mineru, system_settings
 router = APIRouter(tags=["settings"])
 
 
-def _current_bound_host() -> str:
-    # HEALTH_BOUND_HOST is set by run_backend.py to the address actually passed to
-    # uvicorn.run() this process, which may differ from HEALTH_HOST (unset) or from
-    # settings.json (changed after startup, takes effect only on restart).
-    return os.getenv("HEALTH_BOUND_HOST") or os.getenv("HEALTH_HOST", "127.0.0.1")
+def _current_bound_hosts() -> list[str]:
+    # HEALTH_BOUND_HOSTS is set by run_backend.py to the addresses actually bound
+    # this run (dual-listen: loopback + Tailscale). It may differ from HEALTH_HOST
+    # (unset) or from settings.json (changed after startup, takes effect on restart).
+    raw = os.getenv("HEALTH_BOUND_HOSTS")
+    if raw:
+        hosts = [h.strip() for h in raw.split(",") if h.strip()]
+        if hosts:
+            return hosts
+    legacy = os.getenv("HEALTH_BOUND_HOST") or os.getenv("HEALTH_HOST", "127.0.0.1")
+    return [legacy]
+
+
+def _primary_host(hosts: list[str]) -> str:
+    """Legacy single-host view: the remote address when present, else loopback."""
+    for host in reversed(hosts):
+        if not system_settings.is_loopback_host(host):
+            return host
+    return hosts[0] if hosts else "127.0.0.1"
 
 
 def _bind_warning() -> str | None:
@@ -42,13 +56,15 @@ class MineruTokenUpdate(BaseModel):
 
 @router.get("/settings/system")
 def get_system_settings() -> dict:
-    current_host = _current_bound_host()
-    pending_host = system_settings.resolved_host()
+    current_hosts = _current_bound_hosts()
+    pending_hosts = system_settings.resolved_pending_hosts()
     return {
         "platform": platform.system(),
-        "current_host": current_host,
-        "pending_host": pending_host,
-        "restart_required": current_host != pending_host,
+        "current_hosts": current_hosts,
+        "pending_hosts": pending_hosts,
+        "current_host": _primary_host(current_hosts),
+        "pending_host": _primary_host(pending_hosts),
+        "restart_required": set(current_hosts) != set(pending_hosts),
         "bind_warning": _bind_warning(),
         "autostart_supported": system_settings.autostart_supported(),
         "autostart_enabled": system_settings.autostart_status() if system_settings.autostart_supported() else False,
@@ -99,10 +115,12 @@ def update_host(payload: HostUpdate) -> dict:
         if not current:
             raise HTTPException(status_code=409, detail="Tailscale 未连接，先连接后再启用")
         system_settings.save_settings({"host": current})
-        return {"ok": True, "host": current, "restart_required": _current_bound_host() != current}
+        pending_hosts = system_settings.resolved_pending_hosts()
+        return {"ok": True, "host": current, "pending_hosts": pending_hosts, "restart_required": set(_current_bound_hosts()) != set(pending_hosts)}
     new_host = "127.0.0.1"
     system_settings.save_settings({"host": new_host})
-    return {"ok": True, "host": new_host, "restart_required": _current_bound_host() != new_host}
+    pending_hosts = system_settings.resolved_pending_hosts()
+    return {"ok": True, "host": new_host, "pending_hosts": pending_hosts, "restart_required": set(_current_bound_hosts()) != set(pending_hosts)}
 
 
 @router.post("/settings/restart")
@@ -112,7 +130,8 @@ def restart_app() -> dict:
     import lifecycle
 
     pid = lifecycle.request_restart()
-    return {"ok": True, "pid": pid, "pending_host": system_settings.resolved_host()}
+    pending_hosts = system_settings.resolved_pending_hosts()
+    return {"ok": True, "pid": pid, "pending_hosts": pending_hosts, "pending_host": _primary_host(pending_hosts)}
 
 
 @router.post("/settings/autostart")

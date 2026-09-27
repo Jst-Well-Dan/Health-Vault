@@ -27,7 +27,7 @@ class SystemSettingsTest(unittest.TestCase):
         self.app = app
 
     def tearDown(self):
-        for key in ("HEALTH_VAULT_HOME", "HEALTH_DB_PATH", "HEALTH_DISABLE_AGENT_RUNTIME", "HEALTH_HOST"):
+        for key in ("HEALTH_VAULT_HOME", "HEALTH_DB_PATH", "HEALTH_DISABLE_AGENT_RUNTIME", "HEALTH_HOST", "HEALTH_BOUND_HOSTS", "HEALTH_BOUND_HOST"):
             os.environ.pop(key, None)
         self.temp.cleanup()
 
@@ -158,6 +158,42 @@ class SystemSettingsTest(unittest.TestCase):
             finally:
                 os.environ.pop("HEALTH_BOUND_WARNING", None)
             self.assertEqual(response.json()["bind_warning"], "Tailscale 未连接，暂以本机模式启动")
+
+    def test_resolve_bind_hosts_dual_listen_loopback_plus_tailscale(self):
+        from services import system_settings
+        system_settings.save_settings({"host": "100.1.2.3"})
+        with patch("services.system_settings.tailscale_bind_host", return_value="100.4.5.6"):
+            hosts, warning = system_settings.resolve_bind_hosts_with_heal()
+        self.assertEqual(hosts, ["127.0.0.1", "::1", "100.4.5.6"])
+        self.assertIn("100.4.5.6", warning or "")
+
+    def test_resolve_bind_hosts_local_only_when_remote_off(self):
+        from services import system_settings
+        with patch("services.system_settings.tailscale_bind_host", return_value=None):
+            hosts, warning = system_settings.resolve_bind_hosts_with_heal()
+        self.assertEqual((hosts, warning), (["127.0.0.1", "::1"], None))
+        self.assertEqual(system_settings.resolved_pending_hosts(), ["127.0.0.1", "::1"])
+
+    def test_drop_unbindable_loopback_v6_keeps_startup_alive(self):
+        import socket
+        import run_backend
+        with patch("socket.getaddrinfo", side_effect=socket.gaierror("no v6")):
+            hosts = run_backend._drop_unbindable_loopback_v6(["127.0.0.1", "::1", "100.9.9.9"], 8000)
+        self.assertEqual(hosts, ["127.0.0.1", "100.9.9.9"])
+
+    def test_system_settings_reports_both_hosts(self):
+        from services import system_settings
+        system_settings.save_settings({"host": "100.9.9.9"})
+        os.environ["HEALTH_BOUND_HOSTS"] = "127.0.0.1,::1,100.9.9.9"
+        try:
+            with TestClient(self.app) as client:
+                payload = client.get("/api/settings/system").json()
+        finally:
+            os.environ.pop("HEALTH_BOUND_HOSTS", None)
+        self.assertEqual(payload["current_hosts"], ["127.0.0.1", "::1", "100.9.9.9"])
+        self.assertEqual(payload["pending_hosts"], ["127.0.0.1", "::1", "100.9.9.9"])
+        self.assertFalse(payload["restart_required"])
+        self.assertEqual(payload["current_host"], "100.9.9.9")  # legacy single-host view
 
     def test_restart_endpoint_triggers_lifecycle_restart(self):
         with TestClient(self.app) as client:

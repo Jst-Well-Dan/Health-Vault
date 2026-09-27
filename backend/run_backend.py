@@ -31,6 +31,30 @@ def bind_guard_error(bind_host: str) -> str | None:
     )
 
 
+def _drop_unbindable_loopback_v6(hosts: list[str], port: int) -> list[str]:
+    """Best-effort ::1: some machines have no IPv6 loopback; drop it instead of
+    refusing to start (127.0.0.1 still covers local use)."""
+    import socket
+
+    if "::1" not in hosts:
+        return hosts
+    try:
+        addr_infos = socket.getaddrinfo("::1", port, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        addr_infos = []
+    for family, socktype, proto, _, sockaddr in addr_infos:
+        probe = socket.socket(family, socktype, proto)
+        try:
+            probe.bind(sockaddr)
+            return hosts
+        except OSError:
+            continue
+        finally:
+            probe.close()
+    print("本机 IPv6 回环不可用，仅监听 127.0.0.1（不影响使用）。", flush=True)
+    return [h for h in hosts if h != "::1"]
+
+
 def port_conflict_error(bind_host: str, port: int) -> str | None:
     """启动前预检端口：被占用时给可执行的下一步，而不是 uvicorn 的原始报错。"""
     import socket
@@ -61,27 +85,34 @@ if __name__ == "__main__":
         sys.stdout = open(os.devnull, "w")
     if sys.stderr is None:
         sys.stderr = open(os.devnull, "w")
-    bind_host, warning = system_settings.resolve_bind_host_with_heal()
-    os.environ["HEALTH_BOUND_HOST"] = bind_host  # records the host actually bound this run, for /api/settings/system
+    bind_hosts, warning = system_settings.resolve_bind_hosts_with_heal()
+    port = int(os.getenv("HEALTH_PORT", "8000"))
+    bind_hosts = _drop_unbindable_loopback_v6(bind_hosts, port)
+    os.environ["HEALTH_BOUND_HOSTS"] = ",".join(bind_hosts)  # records the hosts actually bound this run, for /api/settings/system
+    os.environ.pop("HEALTH_BOUND_HOST", None)  # legacy single-host key, superseded by HEALTH_BOUND_HOSTS
     if warning:
         os.environ["HEALTH_BOUND_WARNING"] = warning
     else:
         os.environ.pop("HEALTH_BOUND_WARNING", None)
-    guard = bind_guard_error(bind_host)
-    if guard:
-        print(guard, file=sys.stderr, flush=True)
-        sys.exit(1)
-    port = int(os.getenv("HEALTH_PORT", "8000"))
-    conflict = port_conflict_error(bind_host, port)
-    if conflict:
-        print(conflict, file=sys.stderr, flush=True)
-        sys.exit(1)
+    for bind_host in bind_hosts:
+        guard = bind_guard_error(bind_host)
+        if guard:
+            print(guard, file=sys.stderr, flush=True)
+            sys.exit(1)
+    for bind_host in bind_hosts:
+        conflict = port_conflict_error(bind_host, port)
+        if conflict:
+            print(conflict, file=sys.stderr, flush=True)
+            sys.exit(1)
     if os.getenv("HEALTH_RESTART_CHILD") == "1":
         lifecycle.mark_restart_child()
-    config = uvicorn.Config(
-        "main:app",
-        host=bind_host,
-        port=port,
-        log_level="warning",
-    )
-    lifecycle.run_server(config)
+    configs = [
+        uvicorn.Config(
+            "main:app",
+            host=bind_host,
+            port=port,
+            log_level="warning",
+        )
+        for bind_host in bind_hosts
+    ]
+    lifecycle.run_servers(configs)

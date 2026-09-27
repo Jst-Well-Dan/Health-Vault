@@ -23,7 +23,7 @@ class RequestRestartTest(unittest.TestCase):
         lifecycle.set_server(None)
 
     def test_spawns_replacement_with_restart_env_and_no_stale_bound_host(self):
-        with patch.dict(os.environ, {"HEALTH_BOUND_HOST": "100.64.0.1", "HEALTH_BOUND_WARNING": "stale"}), \
+        with patch.dict(os.environ, {"HEALTH_BOUND_HOSTS": "127.0.0.1,100.64.0.1", "HEALTH_BOUND_HOST": "100.64.0.1", "HEALTH_BOUND_WARNING": "stale"}), \
              patch("subprocess.Popen", side_effect=FakePopen) as popen:
             pid = lifecycle.request_restart()
         self.assertEqual(pid, 4242)
@@ -32,6 +32,7 @@ class RequestRestartTest(unittest.TestCase):
         self.assertTrue(str(call.args[0][1]).endswith(str(Path("backend") / "run_backend.py")))
         child_env = call.kwargs["env"]
         self.assertEqual(child_env["HEALTH_RESTART_CHILD"], "1")
+        self.assertNotIn("HEALTH_BOUND_HOSTS", child_env)
         self.assertNotIn("HEALTH_BOUND_HOST", child_env)
         self.assertNotIn("HEALTH_BOUND_WARNING", child_env)
         self.assertEqual(call.kwargs["cwd"], str(ROOT))

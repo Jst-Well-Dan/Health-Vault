@@ -2,14 +2,20 @@
 // self-restart flow (relaunchApp). Loaded as a Babel JSX script before the
 // app shell; exposes window.RestartBanner and window.relaunchApp.
 
-const _probeBase = (base) => new Promise((resolve) => {
-  // Image probe works cross-origin without CORS: any 2xx fires onload.
-  const img = new Image();
-  const timer = setTimeout(() => { img.src = ''; resolve(false); }, 4000);
-  img.onload = () => { clearTimeout(timer); resolve(true); };
-  img.onerror = () => { clearTimeout(timer); resolve(false); };
-  img.src = `${base}/api/meta?t=${Date.now()}`;
-});
+const _isLoopHost = (h) => ['127.0.0.1', '::1', 'localhost'].includes(h);
+// fetch with no-cors: any response (opaque included) means the server is up.
+// (The old Image probe never fired onload for the JSON /api/meta body.)
+const _probeBase = async (base) => {
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 4000);
+    await fetch(`${base}/api/meta?t=${Date.now()}`, { mode: 'no-cors', cache: 'no-store', signal: ctl.signal });
+    clearTimeout(timer);
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
 
 const _waitForServerUp = async (base, timeoutMs) => {
   const deadline = Date.now() + timeoutMs;
@@ -20,9 +26,16 @@ const _waitForServerUp = async (base, timeoutMs) => {
   throw new Error(`等待 ${base} 就绪超时`);
 };
 
-window.relaunchApp = async (pendingHost) => {
+window.relaunchApp = async (pending) => {
   const port = window.location.port || '8000';
-  const target = `${window.location.protocol}//${pendingHost}${port ? `:${port}` : ''}`;
+  // Dual-listen: stay on the same family as the current page — loopback pages
+  // stay on 127.0.0.1 (proxy-exempt), remote pages jump to the new 100.x.
+  const list = (Array.isArray(pending) ? pending : [pending]).filter(Boolean);
+  const stayLocal = _isLoopHost(window.location.hostname);
+  const host = stayLocal
+    ? (list.find(_isLoopHost) || '127.0.0.1')
+    : (list.find((h) => !_isLoopHost(h)) || list[0] || window.location.hostname);
+  const target = `${window.location.protocol}//${host}${port ? `:${port}` : ''}`;
   const overlay = document.createElement('div');
   overlay.className = 'restart-overlay';
   overlay.innerHTML = `<div class="restart-overlay-card">
@@ -67,18 +80,21 @@ function RestartBanner() {
   const showNotice = !showAction && !!info.bind_warning;
   if (!showAction && !showNotice) return null;
 
+  const hosts = info.current_hosts || (info.current_host ? [info.current_host] : []);
+  const pending = info.pending_hosts || (info.pending_host ? [info.pending_host] : []);
   const text = showAction
-    ? `监听地址变更未生效：当前 ${info.current_host}，重启后为 ${info.pending_host}。${info.bind_warning ? `（${info.bind_warning}）` : ''}`
+    ? `监听地址变更未生效：当前 ${hosts.join(' + ')}，重启后为 ${pending.join(' + ')}。${info.bind_warning ? `（${info.bind_warning}）` : ''}`
     : info.bind_warning;
 
   // When Tailscale is down the pending remote address cannot be bound yet —
   // offering restart would kill the working local server for nothing.
-  const tailscaleDown = !!(info.tailscale && !info.tailscale.connected) && info.pending_host !== '127.0.0.1';
+  // (Loopback always stays bound, so local use is never interrupted.)
+  const tailscaleDown = !!(info.tailscale && !info.tailscale.connected) && pending.some((h) => h && !_isLoopHost(h));
 
   const doRestart = async () => {
     setBusy(true); setError('');
     try {
-      await window.relaunchApp(info.pending_host);
+      await window.relaunchApp(pending);
     } catch (err) {
       setError(err.message || '重启失败，请手动重启应用');
       setBusy(false);

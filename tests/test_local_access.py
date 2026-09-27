@@ -18,6 +18,7 @@ class LocalAccessTest(unittest.TestCase):
         os.environ["HEALTH_VAULT_HOME"] = self.temp.name
         os.environ["HEALTH_DB_PATH"] = str(Path(self.temp.name) / "health.db")
         os.environ["HEALTH_DISABLE_AGENT_RUNTIME"] = "1"
+        os.environ.pop("HEALTH_BOUND_HOSTS", None)
         os.environ.pop("HEALTH_BOUND_HOST", None)
         import database
         from database import init_db
@@ -30,7 +31,7 @@ class LocalAccessTest(unittest.TestCase):
         self.app = app
 
     def tearDown(self):
-        for key in ("HEALTH_VAULT_HOME", "HEALTH_DB_PATH", "HEALTH_DISABLE_AGENT_RUNTIME", "HEALTH_BOUND_HOST"):
+        for key in ("HEALTH_VAULT_HOME", "HEALTH_DB_PATH", "HEALTH_DISABLE_AGENT_RUNTIME", "HEALTH_BOUND_HOSTS", "HEALTH_BOUND_HOST"):
             os.environ.pop(key, None)
         self.temp.cleanup()
 

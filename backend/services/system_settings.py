@@ -119,6 +119,29 @@ def resolve_bind_host_with_heal() -> tuple[str, str | None]:
     return host, warning
 
 
+def resolve_bind_hosts_with_heal() -> tuple[list[str], str | None]:
+    """Dual-listen: always 127.0.0.1, plus the live Tailscale IP when remote is on.
+
+    Loopback is proxy-exempt in browsers, so the local PC always uses
+    127.0.0.1 with zero config; phones use the 100.x address. Never 0.0.0.0:
+    each entry must still pass is_allowed_bind_host().
+    """
+    remote, warning = resolve_bind_host_with_heal()
+    hosts = ["127.0.0.1", "::1"]
+    if not is_loopback_host(remote) and remote not in hosts:
+        hosts.append(remote)
+    return hosts, warning
+
+
+def resolved_pending_hosts() -> list[str]:
+    """Hosts the next (re)start will listen on, per current config."""
+    pending = resolved_host()
+    hosts = ["127.0.0.1", "::1"]
+    if not is_loopback_host(pending) and pending not in hosts:
+        hosts.append(pending)
+    return hosts
+
+
 def _tailscale_binary() -> str | None:
     found = shutil.which("tailscale")
     if found:
