@@ -5,7 +5,7 @@ description: 把报告导入家庭健康档案。当用户说"导入报告""处�
 
 # 导入报告到健康档案
 
-应用本身不处理写入（浏览器端只读）。写入只走这条路径：**本机 pi + 本 skill + `backend/scripts/import_visit_json.py`**。
+批量报告导入（visits + labs + attachments 成套写库）只走这条路径：**本机 pi + 本 skill + `backend/scripts/import_visit_json.py`**。前端白名单小写入（成员、记事/提醒、体重、用药单条维护）由用户在界面确认后直接调 REST，不走本 skill。
 
 ## 四条铁律
 
@@ -80,7 +80,9 @@ mineru-open-api flash-extract "<pdf或图片>" -o outgoing/mineru/
 - `visit.diagnosis` 是数组；`severity` 只能是 `严重/一般/轻微` 或 null。
 - 每条 lab 保留报告的参考范围 `ref_low/ref_high` 与原判读 `status`（`normal/high/low/abnormal/unknown`）。
 - `attachments[].file_path` 用项目相对路径，指向第 4 步归档的文件。
+- **用药必抽**：报告里出现 `用药/R:/处方/口服/每日/每次/片/盒` 任一字样就建 `meds[]`，逐味填 `name/dose/freq/route/start_date/end_date`；起止日期缺失时用就诊日期，`ongoing` 不确定就填 false 并写进 notes。处方明确写“未开药/无需用药”才允许 `meds: []`。
 - **核对化验条数**：payload 里 labs 的数量应与 Markdown 表格行数大致吻合；差距大说明表格漏读了，回第 3 步。
+- **核对用药味数**：payload 里 meds 的味数应与处方/病历的处理意见里药味数一致；报告有药但 `meds: []` 必须停下来，不准直接 dry-run。
 
 ### 6. dry-run 并展示给用户
 
@@ -89,6 +91,8 @@ python backend/scripts/import_visit_json.py --file data/imports/<member>/<payloa
 ```
 
 把输出（成员、日期、机构、诊断、将写入的条数、重复就诊提醒）**原样**给用户看，并等一句明确的"确认/写入"。同一天已有就诊记录时脚本会提示，先问用户是不是重复录入。
+
+展示时必须单列一行 `用药 N 味：药名×剂量×用法`（N=0 时写 `用药 0 味（报告未提用药）`），让用户一眼看出漏药。
 
 ### 7. 写入
 
@@ -108,4 +112,5 @@ python backend/scripts/import_visit_json.py --file data/imports/<member>/<payloa
 | `附件文件不存在` | 第 4 步没归档到位，先归档再写 |
 | `同一天已有就诊记录` | 先确认是否重复；确实是新记录才加 `--allow-duplicate` |
 | `visit.notes 和 visit.note_full 必填` | 报告里没写治疗/用药就说"报告未提供"，不要留空 |
+| 处方有药但 payload `meds: []` | 回第 5 步按“用药必抽”补齐，不准绕过；已入库的旧 visit 漏药走单条 REST 补（先贴 before/after 并确认），不要用导入脚本重建 visit |
 | MinerU 超时或 429 | 换 `extract`（带 token）或人工按原图整理 |

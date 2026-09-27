@@ -41,6 +41,8 @@ python backend/scripts/import_visit_json.py --file <payload.json> --write
 
 The safe import script validates payload shape (member exists, date format, severity, required summary fields, attachment files on disk), refuses suspicious duplicate visits for the same member/date, backs up the database before write, imports visit + labs + meds + attachments in one transaction, then re-queries to verify row counts.
 
+Implementation note: validation/transaction/verify live in `backend/services/writes.py`, shared by this script and the REST routers. Edit rules there, not in the script or routers — both sides change together.
+
 Same-day duplicates need an explicit flag:
 
 ```powershell

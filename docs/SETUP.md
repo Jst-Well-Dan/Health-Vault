@@ -74,7 +74,7 @@ npm start
 
 首次启动会创建空数据库和 Agent 本地凭据目录。随后在本机浏览器打开 <http://127.0.0.1:8000/>：**不需要密码、不需要任何环境变量**，打开即用。
 
-> ⚠️ 本版本**没有登录鉴权**，因此只允许监听 `127.0.0.1`；绑定到其他地址会拒绝启动。同机上运行的其他程序可以读写这份健康档案，请自行保证这台电脑的账户安全。
+> ⚠️ 本版本**没有登录鉴权**，只允许监听 `127.0.0.1` 或 Tailscale `100.x`；绑定到 `0.0.0.0`/局域网会拒绝启动。tailnet 内设备直接读写，请自行保证 tailnet 成员可信与电脑账户安全。
 
 ## 3. 日常启动与停止
 
@@ -117,17 +117,16 @@ pi --skill .pi/skills/health-report-import -p "处理 incoming 里的报告，�
 
 同一天已有就诊记录时脚本会拒绝写入，确认不是重复后加 `--allow-duplicate`。
 
-## 5. 手机访问（Tailscale）【已停用】
+## 5. 手机访问（Tailscale-only，用户已确认无鉴权风险）
 
-> 当前版本仅支持本机 `127.0.0.1` 访问：设置页的远程访问入口已隐藏，`/settings/host` 开远程会直接拒绝。Tailscale 检测代码保留在 `backend/services/system_settings.py`，将来如需恢复，按 git 历史中的本节配置；**但恢复前必须先重新引入登录鉴权**，因为现在绑定非本机地址会被直接拒绝。
-
-以下为历史步骤（已停用，保留备查）：
+> Tailscale-only：只允许 `127.0.0.1` 或检测到的 Tailscale `100.x`，`/settings/host` 开远程时未连接会直接拒绝。`0.0.0.0`/局域网一律拒绝。
 
 1. 先确认电脑本机访问正常。
 2. 在电脑和手机安装 Tailscale，并登录同一个受信任的 tailnet。
-3. 在应用的 **设置 → 远程访问 (Tailscale)** 中确认状态为“已连接”。
+3. 在应用的 **设置 → 本机与自启** 中确认 Tailscale 状态为“已连接”。
 4. 点击“允许 Tailscale 访问”，然后**点击“立即重启”**：应用会自动重启并重新绑定新地址（约 10 秒，页面会自动跳转），无需手动重启服务。
 5. 重启完成后，用设置页面显示的 Tailscale IP 和端口从手机访问，例如 `http://100.x.y.z:8000/`。
+6. 手机打不开但电脑能开时：Windows 防火墙拦了 Tailscale 网卡。用**管理员 PowerShell**跑一次（只需一次，约1分钟）：`netsh advfirewall firewall add rule name="HealthVault Tailscale 8000" dir=in action=allow protocol=TCP localport=8000 remoteip=100.64.0.0/10`，只放 tailnet，不放局域网。
 
 网页设置只会绑定检测到的 Tailscale `100.x` IPv4 地址；Tailscale 未连接时不能启用。不要手动把 `HEALTH_HOST` 设为 `0.0.0.0`，也不要配置路由器端口映射或公共反向代理。
 

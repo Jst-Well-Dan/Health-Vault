@@ -1,6 +1,6 @@
 ---
 name: health-db-writer
-description: 安全地校验、准备、导入并核对本项目的 SQLite 健康档案数据。包含文件归档与命名（YYYYMMDD_机构_项目_姓名）、报告转结构化 JSON 的规则。在本仓库用 pi 写入或更新就诊、化验、用药、附件、提醒、成员、体重数据时使用；日常导入报告优先用 health-report-import skill。
+description: 终端 pi 批量写库的 payload 形状与校验规则库（仅批量专属；前端白名单小写入不走本 skill）。包含文件归档与命名（YYYYMMDD_机构_项目_姓名）、报告转结构化 JSON 的规则。在本仓库用 pi 批量写入或更新就诊、化验、用药、附件、提醒、成员、体重数据时使用；日常导入报告优先用 health-report-import skill。
 ---
 
 # Health DB Writer
@@ -8,6 +8,8 @@ description: 安全地校验、准备、导入并核对本项目的 SQLite 健�
 ## Core Rule
 
 Treat `data/health.db` as user data. Do not write ad hoc SQL to the real database unless the user explicitly asks. Prefer project scripts, dry-runs, backups, and post-write verification.
+
+Scope: terminal-pi bulk writes only. Frontend allowlist single-record writes (members, reminders/notes, weight, meds via UI-confirmed REST) do not go through this skill.
 
 ## Workflow
 
