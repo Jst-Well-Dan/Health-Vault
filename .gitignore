@@ -46,6 +46,8 @@ pnpm-debug.log*
 docs/*
 !docs/electron-agent-development-guide.md
 !docs/SETUP.md
+!docs/archive/
+!docs/archive/**
 !docs/images/
 !docs/images/*.png
 !docs/examples/
