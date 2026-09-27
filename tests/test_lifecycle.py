@@ -65,22 +65,43 @@ class FakeServer:
         self.fails = fails
         self.started = False
         self.run_calls = 0
+        self.sockets = None
 
-    def run(self):
+    def run(self, sockets=None):
         self.run_calls += 1
+        self.sockets = sockets
         if self.fails > 0:
             self.fails -= 1
             raise SystemExit(3)
         self.started = True
 
 
-class RunServerTest(unittest.TestCase):
+class RunServersTest(unittest.TestCase):
     def tearDown(self):
         lifecycle.set_server(None)
         lifecycle._restart_child = False
 
+    def test_binds_every_address_on_one_server(self):
+        """本机 + Tailscale 必须共用一个 Server，否则 lifespan 会跑多次。"""
+        configs = [MagicMock(), MagicMock(), MagicMock()]
+        servers = []
+
+        def factory(cfg):
+            server = FakeServer(cfg, fails=0)
+            servers.append(server)
+            return server
+
+        fake_uvicorn = MagicMock()
+        fake_uvicorn.Server = factory
+        with patch.object(lifecycle, "uvicorn", fake_uvicorn):
+            lifecycle.run_servers(configs)
+        self.assertEqual(len(servers), 1)
+        self.assertEqual(len(servers[0].sockets), 3)
+        self.assertTrue(servers[0].started)
+        self.assertIs(lifecycle._server, servers[0])
+
     def test_retries_bind_for_restart_child(self):
-        config = object()
+        config = MagicMock()
         made = []
         fail_counts = [1, 0]
 
@@ -94,7 +115,7 @@ class RunServerTest(unittest.TestCase):
         with patch.object(lifecycle, "uvicorn", fake_uvicorn), \
              patch.object(lifecycle.time, "sleep", lambda _: None):
             lifecycle.mark_restart_child()
-            lifecycle.run_server(config)
+            lifecycle.run_servers([config])
         self.assertEqual(len(made), 2)
         self.assertTrue(made[-1].started)
         self.assertEqual(made[0].run_calls, 1)
@@ -103,7 +124,7 @@ class RunServerTest(unittest.TestCase):
         self.assertIs(lifecycle._server, made[-1])
 
     def test_gives_up_after_retry_window(self):
-        config = object()
+        config = MagicMock()
         fail_counts = [1] * 10  # every bind attempt fails
 
         def factory(cfg):
@@ -116,10 +137,10 @@ class RunServerTest(unittest.TestCase):
              patch.object(lifecycle.time, "time", side_effect=[0, 0, 0, 0, 100, 100]):
             lifecycle.mark_restart_child()
             with self.assertRaises(RuntimeError):
-                lifecycle.run_server(config)
+                lifecycle.run_servers([config])
 
     def test_runs_once_when_not_restart_child(self):
-        config = object()
+        config = MagicMock()
         made = []
 
         def factory(cfg):
@@ -130,9 +151,12 @@ class RunServerTest(unittest.TestCase):
         fake_uvicorn = MagicMock()
         fake_uvicorn.Server = factory
         with patch.object(lifecycle, "uvicorn", fake_uvicorn):
-            lifecycle.run_server(config)
+            lifecycle.run_servers([config])
         self.assertEqual(len(made), 1)
         self.assertTrue(made[0].started)
+
+    def test_no_addresses_is_a_noop(self):
+        lifecycle.run_servers([])  # must not raise
 
 
 if __name__ == "__main__":

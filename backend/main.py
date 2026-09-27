@@ -1,11 +1,9 @@
 import os
-import threading
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-import database
 from database import DB_PATH, database_needs_migration, is_mock_mode, init_db
 from services.backups import create_database_backup, prune_old_snapshots
 from mock_data import seed_mock_data
@@ -15,33 +13,17 @@ app = FastAPI(title="家庭健康档案 API", version="2.0.0")
 FRONTEND_DIR = os.path.abspath(os.getenv("HEALTH_FRONTEND_DIR", os.path.join(os.path.dirname(__file__), "..", "frontend")))
 
 
-_startup_lock = threading.Lock()
-_started_databases: set[str] = set()
-
-
 @app.on_event("startup")
 def startup() -> None:
-    """Run startup side effects once per database file.
-
-    双地址监听（本机 + Tailscale）会在同一进程里为每个监听地址各起一个 uvicorn
-    server，lifespan 因此会并发跑多次。启动副作用只能跑一次：全新库上两个
-    ``init_db()`` 并发抢 ``PRAGMA journal_mode = WAL`` 会 "database is locked"，
-    让首次安装根本起不来。
-    """
-    with _startup_lock:
-        db_key = str(database.DB_PATH)
-        if db_key in _started_databases:
-            return
-        _started_databases.add(db_key)
-        if database_needs_migration():
-            create_database_backup(prefix="health_preupgrade")
-        try:
-            prune_old_snapshots()
-        except Exception:
-            pass
-        init_db()
-        if is_mock_mode():
-            seed_mock_data()
+    if database_needs_migration():
+        create_database_backup(prefix="health_preupgrade")
+    try:
+        prune_old_snapshots()
+    except Exception:
+        pass
+    init_db()
+    if is_mock_mode():
+        seed_mock_data()
 
 
 app.include_router(activity.router, prefix="/api")

@@ -25,20 +25,13 @@ _RESTART_DELAY_SECONDS = 1.2
 _RESTART_CHILD_ENV = "HEALTH_RESTART_CHILD"
 
 _server = None
-_servers: list = []
 _restart_child = False
-
-
-def set_servers(servers) -> None:
-    """Record the running uvicorn.Server(s) so request_restart() can stop them."""
-    global _server, _servers
-    _servers = [s for s in (servers or []) if s is not None]
-    _server = _servers[-1] if _servers else None
 
 
 def set_server(server) -> None:
     """Record the running uvicorn.Server so request_restart() can stop it."""
-    set_servers([server] if server is not None else [])
+    global _server
+    _server = server
 
 
 def mark_restart_child() -> None:
@@ -85,56 +78,64 @@ def request_restart(delay: float = _RESTART_DELAY_SECONDS) -> int:
 
     def _stop_later() -> None:
         time.sleep(max(0.0, delay))
-        for server in list(_servers):
-            server.should_exit = True
+        if _server is not None:
+            _server.should_exit = True
 
     threading.Thread(target=_stop_later, daemon=True).start()
     return proc.pid
 
 
-def _register(server) -> None:
-    global _server
-    if server is not None and server not in _servers:
-        _servers.append(server)
-    _server = server
+def _bind_sockets(configs: list) -> list:
+    """Bind one listening socket per config (one config per listen address)."""
+    sockets = []
+    for config in configs:
+        try:
+            sockets.append(config.bind_socket())
+        except SystemExit as exc:  # uvicorn 绑定失败时直接 sys.exit
+            for bound in sockets:
+                bound.close()
+            raise SystemExit(f"无法绑定 {config.host}:{config.port}（{exc}）") from exc
+    return sockets
 
 
-def _run_one(config) -> None:
-    """Run one uvicorn server, retrying the bind while this process is a restart child
+def _run_with_bind_retry(run_once) -> None:
+    """Run once, or retry the bind while this process is a restart child
     (the old process may still hold the port briefly after a web restart)."""
-    server = uvicorn.Server(config)
-    _register(server)
     if not _restart_child:
-        server.run()
+        run_once()
         return
     deadline = time.time() + _BIND_RETRY_SECONDS
     while True:
+        started = False
         try:
-            server.run()
+            started = run_once()
         except SystemExit:
             pass
-        if server.started:
+        if started:
             return
         if time.time() >= deadline:
             raise RuntimeError(f"重启后 {_BIND_RETRY_SECONDS} 秒内无法绑定监听地址，请检查端口占用与 Tailscale 状态后手动启动")
         time.sleep(1)
-        server = uvicorn.Server(config)
-        _register(server)
-
-
-def run_server(config) -> None:
-    """Run a single uvicorn server (restart children retry the bind)."""
-    _run_one(config)
 
 
 def run_servers(configs) -> None:
-    """Run one uvicorn server per listen address (dual-listen: loopback + Tailscale).
+    """Run a single uvicorn server bound to every configured listen address.
 
-    All but the last server run on daemon threads; the last runs on the main
-    thread so Ctrl+C keeps working and its exit ends the process."""
+    Dual-listen (loopback + Tailscale) needs one socket per address, but all of
+    them must belong to ONE Server: a Server per address runs the app lifespan
+    once per address, so startup side effects (pre-upgrade backup, snapshot
+    pruning, schema init, mock seeding) repeat, and two concurrent init_db()
+    calls lock a brand-new database. Ctrl+C keeps working because the single
+    server runs on the main thread.
+    """
     configs = list(configs)
-    for config in configs[:-1]:
-        thread = threading.Thread(target=_run_one, args=(config,), daemon=True)
-        thread.start()
-    if configs:
-        _run_one(configs[-1])
+    if not configs:
+        return
+
+    def run_once() -> bool:
+        server = uvicorn.Server(configs[0])
+        set_server(server)
+        server.run(sockets=_bind_sockets(configs))
+        return server.started
+
+    _run_with_bind_retry(run_once)
