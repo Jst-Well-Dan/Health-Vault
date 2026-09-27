@@ -9,6 +9,13 @@ from database import get_conn
 from models import AttachmentRecordCreate, AttachmentUpdate
 from path_utils import resolve_project_data_path
 from routers.common import require_row, row_to_dict, rows_to_dicts
+from services.writes import (
+    PayloadError,
+    VisitMismatchError,
+    create_attachment_record,
+    delete_attachment_record,
+    update_attachment_record,
+)
 
 
 router = APIRouter(tags=["attachments"])
@@ -123,50 +130,27 @@ def create_attachment(payload: AttachmentRecordCreate) -> dict:
             file_path = str(resolve_project_data_path(file_path).relative_to(Path(__file__).resolve().parents[2])).replace("\\", "/")
         except ValueError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
-    data = payload.model_dump()
-    data["file_path"] = file_path
-    with get_conn() as conn:
-        cur = conn.execute(
-            """
-            INSERT INTO attachments
-              (member_key, visit_id, date, title, org, tag, filename, file_path, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                payload.member_key, payload.visit_id, payload.date, payload.title,
-                payload.org, payload.tag, payload.filename, file_path, payload.notes,
-            ),
-        )
-        return row_to_dict(conn.execute("SELECT * FROM attachments WHERE id = ?", (cur.lastrowid,)).fetchone())
+    return create_attachment_record(
+        member_key=payload.member_key, visit_id=payload.visit_id, date=payload.date,
+        title=payload.title, org=payload.org, tag=payload.tag, filename=payload.filename,
+        file_path=file_path, notes=payload.notes,
+    )
 
 
 @router.patch("/attachments/{attachment_id}")
 def update_attachment(attachment_id: int, payload: AttachmentUpdate) -> dict:
-    allowed_fields = {"visit_id", "date", "title", "org", "tag", "file_path", "notes"}
-    data = {key: value for key, value in payload.model_dump(exclude_unset=True).items() if key in allowed_fields}
+    data = payload.model_dump(exclude_unset=True)
     if data.get("file_path"):
         try:
             data["file_path"] = str(resolve_project_data_path(data["file_path"]).relative_to(Path(__file__).resolve().parents[2])).replace("\\", "/")
         except ValueError as exc:
             raise HTTPException(status_code=403, detail=str(exc)) from exc
-    with get_conn() as conn:
-        attachment = require_row(
-            conn.execute("SELECT member_key FROM attachments WHERE id = ?", (attachment_id,)).fetchone(),
-            "附件不存在",
-        )
-        if data.get("visit_id") is not None:
-            visit = require_row(
-                conn.execute("SELECT member_key FROM visits WHERE id = ?", (data["visit_id"],)).fetchone(),
-                "关联就诊记录不存在",
-            )
-            if visit["member_key"] != attachment["member_key"]:
-                raise HTTPException(status_code=422, detail="关联就诊记录不属于当前成员")
-        if data:
-            conn.execute(
-                f"UPDATE attachments SET {', '.join(f'{field} = ?' for field in data)} WHERE id = ?",
-                [*data.values(), attachment_id],
-            )
-        return row_to_dict(conn.execute("SELECT * FROM attachments WHERE id = ?", (attachment_id,)).fetchone())
+    try:
+        return update_attachment_record(attachment_id, data)
+    except PayloadError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except VisitMismatchError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 def _delete_file_candidate(file_path: str | None) -> Path | None:
@@ -203,9 +187,10 @@ def delete_attachment(attachment_id: int, delete_file: bool = False) -> dict:
         if attachment.get("file_path") and file_path is None:
             warning = "附件元数据已删除；原文件不存在或已被移走。"
 
-    with get_conn() as conn:
-        require_row(conn.execute("SELECT id FROM attachments WHERE id = ?", (attachment_id,)).fetchone(), "附件不存在")
-        conn.execute("DELETE FROM attachments WHERE id = ?", (attachment_id,))
+    try:
+        delete_attachment_record(attachment_id)
+    except PayloadError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     file_deleted = False
     if delete_file and file_path is not None:

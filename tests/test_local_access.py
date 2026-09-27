@@ -1,4 +1,4 @@
-"""本机直连模式：没有登录鉴权，但只允许监听 127.0.0.1。"""
+"""Tailscale-only 模式：没有登录鉴权，只允许监听 127.0.0.1 或 Tailscale 100.x。"""
 
 import os
 import sys
@@ -55,15 +55,35 @@ class LocalAccessTest(unittest.TestCase):
 
 
 class BindGuardTest(unittest.TestCase):
-    def test_only_loopback_binds_are_allowed(self):
+    def test_only_loopback_and_tailscale_binds_are_allowed(self):
         import run_backend
 
-        for host in ("127.0.0.1", "::1", "localhost"):
+        for host in ("127.0.0.1", "::1", "localhost", "100.101.102.103", "100.126.18.110"):
             with self.subTest(host=host):
                 self.assertIsNone(run_backend.bind_guard_error(host))
-        for host in ("0.0.0.0", "100.101.102.103", "192.168.1.10"):
+        for host in ("0.0.0.0", "::", "192.168.1.10", "10.0.0.5", "8.8.8.8", "100.63.1.1", "100.128.0.1"):
             with self.subTest(host=host):
                 self.assertIn("拒绝启动", run_backend.bind_guard_error(host) or "")
+
+
+class PortCheckTest(unittest.TestCase):
+    def test_free_port_has_no_conflict(self):
+        import run_backend
+
+        self.assertIsNone(run_backend.port_conflict_error("127.0.0.1", 0))
+
+    def test_occupied_port_reports_conflict(self):
+        import run_backend
+        import socket
+
+        holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        holder.bind(("127.0.0.1", 0))
+        holder.listen(1)
+        try:
+            msg = run_backend.port_conflict_error("127.0.0.1", holder.getsockname()[1])
+        finally:
+            holder.close()
+        self.assertIn("端口被占用", msg or "")
 
 
 if __name__ == "__main__":

@@ -24,8 +24,29 @@ _cache: dict[str, Any] | None = None
 
 
 def is_loopback_host(host: str | None) -> bool:
-    """本应用没有登录凭据，因此只允许监听/访问本机地址。"""
-    return (host or "") in LOOPBACK_HOSTS
+    """是否本机地址（127.0.0.1/::1/localhost）。"""
+    return (host or "").strip() in LOOPBACK_HOSTS
+
+
+def is_tailscale_ip(host: str | None) -> bool:
+    """是否 Tailscale 地址（100.64.0.0/10），只放行这一段。"""
+    if not host:
+        return False
+    parts = host.strip().split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        octets = [int(p) for p in parts]
+    except ValueError:
+        return False
+    if any(o < 0 or o > 255 for o in octets):
+        return False
+    return octets[0] == 100 and 64 <= octets[1] <= 127
+
+
+def is_allowed_bind_host(host: str | None) -> bool:
+    """Tailscale-only 规则：只允许本机 + Tailscale 100.x，拒绝 0.0.0.0/局域网。"""
+    return is_loopback_host(host) or is_tailscale_ip(host)
 
 
 def _settings_path() -> Path:

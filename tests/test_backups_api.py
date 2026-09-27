@@ -212,6 +212,66 @@ class BackupsApiTest(unittest.TestCase):
         with database.get_conn() as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM members").fetchone()[0], 0)
 
+    def test_export_bundle_contains_db_reports_settings_and_manifest(self):
+        with database.get_conn() as conn:
+            conn.execute("INSERT INTO members (key, name) VALUES ('bundle_member', '打包成员')")
+        reports_dir = self.db_path.parent / "reports" / "bundle_member"
+        reports_dir.mkdir(parents=True)
+        (reports_dir / "note.md").write_text("hello", encoding="utf-8")
+        (self.db_path.parent / "settings.json").write_text("{}", encoding="utf-8")
+
+        response = self.client.get("/api/backups/export-bundle")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.headers["content-type"].split(";")[0], "application/zip")
+        import io
+        import json
+        import zipfile
+        archive = zipfile.ZipFile(io.BytesIO(response.content))
+        members = archive.namelist()
+        self.assertIn("health.db", members)
+        self.assertIn("manifest.json", members)
+        self.assertIn("reports/bundle_member/note.md", members)
+        self.assertIn("settings.json", members)
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        self.assertEqual(manifest["report_file_count"], 1)
+        self.assertTrue(manifest["settings_included"])
+
+    def test_import_bundle_roundtrip_restores_db_and_reports(self):
+        exported = self.client.get("/api/backups/export-bundle")
+        self.assertEqual(exported.status_code, 200, exported.text)
+
+        response = self.client.post(
+            "/api/backups/import-bundle",
+            files={"file": ("health-vault-20240101.zip", exported.content, "application/zip")},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertTrue(body["ok"])
+        self.assertTrue(body["restart_required"])
+        self.assertIn("report_files_restored", body)
+        self.assertIn("pre_restore_backup", body)
+
+    def test_import_bundle_rejects_non_zip_or_missing_db(self):
+        import io
+        import zipfile
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("notes.txt", "x")
+        cases = [
+            ("bad.zip", b"not a zip file", "zip"),
+            ("notes.db", b"content", ".zip"),
+            ("empty.zip", buffer.getvalue(), "health.db"),
+        ]
+        for filename, content, message in cases:
+            with self.subTest(filename=filename):
+                response = self.client.post(
+                    "/api/backups/import-bundle", files={"file": (filename, content, "application/zip")}
+                )
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertIn(message, response.text)
+
     def test_prune_old_backups_uses_active_database_backup_dir_and_dry_run(self):
         backup_dir = self.db_path.parent / "backups"
         backup_dir.mkdir(parents=True)

@@ -8,7 +8,7 @@ function SettingsPanel({ onClose, onSelect }) {
     {
       key: 'remote',
       label: '本机与自启',
-      description: '查看本机监听地址、设置开机自启（远程访问已停用）。',
+      description: '切本机/Tailscale 监听地址、设置开机自启（只放 100.x）。',
     },
     {
       key: 'mineru',

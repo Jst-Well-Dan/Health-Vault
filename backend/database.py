@@ -33,7 +33,10 @@ def _default_db_path() -> Path:
 
 
 DB_PATH = Path(os.getenv("HEALTH_DB_PATH", _default_db_path())).resolve()
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# 记事 kind 白名单（唯一定义）。启动迁移与写入校验共用，改这里一处即可。
+PET_CARE_KINDS = ("驱虫", "洗澡", "换猫砂")
 
 
 def database_needs_migration() -> bool:
@@ -230,19 +233,12 @@ def init_db() -> None:
               created_at  TEXT DEFAULT (datetime('now','localtime'))
             );
 
-            CREATE TABLE IF NOT EXISTS reminders (
+            CREATE TABLE IF NOT EXISTS pet_care_logs (
               id          INTEGER PRIMARY KEY AUTOINCREMENT,
               member_key  TEXT NOT NULL REFERENCES members(key),
               date        TEXT NOT NULL,
-              title       TEXT NOT NULL,
               kind        TEXT NOT NULL,
-              priority    TEXT NOT NULL DEFAULT 'normal',
-              done        INTEGER NOT NULL DEFAULT 0,
-              done_at     TEXT,
               notes       TEXT,
-              source      TEXT NOT NULL DEFAULT 'manual',
-              rule_key    TEXT,
-              auto_key    TEXT,
               created_at  TEXT DEFAULT (datetime('now','localtime'))
             );
 
@@ -285,11 +281,30 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_labs_panel          ON lab_results(member_key, panel);
             CREATE INDEX IF NOT EXISTS idx_meds_member         ON meds(member_key);
             CREATE INDEX IF NOT EXISTS idx_weight_member       ON weight_log(member_key, date);
-            CREATE INDEX IF NOT EXISTS idx_reminders_member    ON reminders(member_key, date);
+            CREATE INDEX IF NOT EXISTS idx_pet_care_member    ON pet_care_logs(member_key, date);
             CREATE INDEX IF NOT EXISTS idx_attachments_member  ON attachments(member_key, date);
             CREATE INDEX IF NOT EXISTS idx_agent_messages_session ON agent_messages(session_id, id);
             """
         )
+        pet_care_cols = {row[1] for row in conn.execute("PRAGMA table_info(pet_care_logs)").fetchall()}
+        if pet_care_cols:
+            # 记事只保留 kind：删除非法 kind 的测试行，title 差异信息回填 notes 后删 title 列。
+            # 记事只保留白名单 kind，见 PET_CARE_KINDS。
+            conn.execute(
+                f"DELETE FROM pet_care_logs WHERE kind NOT IN ({','.join('?' for _ in PET_CARE_KINDS)})",
+                tuple(PET_CARE_KINDS),
+            )
+            if "title" in pet_care_cols:
+                for care_row in conn.execute("SELECT id, kind, title, notes FROM pet_care_logs").fetchall():
+                    care_title = (care_row["title"] or "").strip()
+                    care_notes = care_row["notes"] or ""
+                    if care_title and care_title != care_row["kind"] and care_title not in care_notes:
+                        merged_notes = f"{care_title} · {care_notes}" if care_notes else care_title
+                        conn.execute(
+                            "UPDATE pet_care_logs SET notes = ? WHERE id = ?",
+                            (merged_notes, care_row["id"]),
+                        )
+                conn.execute("ALTER TABLE pet_care_logs DROP COLUMN title")
         existing_cols = {row[1] for row in conn.execute("PRAGMA table_info(meds)").fetchall()}
         if "category" not in existing_cols:
             conn.execute("ALTER TABLE meds ADD COLUMN category TEXT")
@@ -348,18 +363,24 @@ def init_db() -> None:
                 (max_sort_order + index * 10, row["key"]),
             )
 
-        reminder_cols = {row[1] for row in conn.execute("PRAGMA table_info(reminders)").fetchall()}
-        if "source" not in reminder_cols:
-            conn.execute("ALTER TABLE reminders ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
-        if "rule_key" not in reminder_cols:
-            conn.execute("ALTER TABLE reminders ADD COLUMN rule_key TEXT")
-        if "auto_key" not in reminder_cols:
-            conn.execute("ALTER TABLE reminders ADD COLUMN auto_key TEXT")
-        conn.execute(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_reminders_auto_key
-              ON reminders(auto_key)
-              WHERE auto_key IS NOT NULL
-            """
-        )
+        # v2: reminders → pet_care_logs。只迁已完成的宠物行；人类提醒和未完成的未来提醒随旧表一起删除。
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+        if "reminders" in tables:
+            # 非白名单 kind 归入“记事”，原 kind 并入 notes 保留信息。
+            kind_list = ",".join("?" for _ in PET_CARE_KINDS)
+            conn.execute(
+                f"""
+                INSERT OR IGNORE INTO pet_care_logs (id, member_key, date, kind, notes)
+                SELECT r.id, r.member_key, r.date,
+                       CASE WHEN r.kind IN ({kind_list}) THEN r.kind ELSE '记事' END,
+                       CASE WHEN r.kind IN ({kind_list}) THEN r.notes
+                            ELSE COALESCE(r.kind, '') || CASE WHEN r.notes IS NULL OR r.notes = '' THEN '' ELSE '｜' || r.notes END END
+                FROM reminders r
+                JOIN members m ON m.key = r.member_key
+                WHERE r.done = 1 AND m.species != 'human'
+                """,
+                tuple(PET_CARE_KINDS) + tuple(PET_CARE_KINDS),
+            )
+            conn.execute("DROP TABLE IF EXISTS reminders")
+        conn.execute("DROP INDEX IF EXISTS idx_reminders_auto_key")
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

@@ -1,6 +1,6 @@
 // Family overview screen backed by members table data.
 
-const FAMILY_TODAY = new Date('2026-04-19T00:00:00');
+const FAMILY_TODAY = (() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; })();
 
 const parseDate = (date) => {
   if (!date) return null;

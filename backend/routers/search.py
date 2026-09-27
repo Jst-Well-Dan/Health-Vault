@@ -27,7 +27,7 @@ SEARCH_TABLES: dict[str, tuple[str, list[str], str]] = {
     "visits": ("就诊记录", ["date", "type", "hospital", "department", "doctor", "chief_complaint", "diagnosis", "notes", "note_full"], "date DESC, id DESC"),
     "lab_results": ("化验结果", ["date", "panel", "test_name", "value", "unit"], "date DESC, id DESC"),
     "meds": ("用药", ["name", "dose", "freq", "route", "category", "notes"], "start_date DESC, id DESC"),
-    "reminders": ("提醒", ["date", "title", "kind", "notes"], "date DESC, id DESC"),
+    "pet_care_logs": ("宠物记事", ["date", "kind", "notes"], "date DESC, id DESC"),
     "attachments": ("附件", ["date", "title", "org", "tag", "filename", "file_path", "notes"], "date DESC, id DESC"),
     "members": ("成员资料", ["name", "full_name", "allergies", "chronic", "notes"], "sort_order ASC, key ASC"),
 }

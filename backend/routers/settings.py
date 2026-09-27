@@ -93,10 +93,14 @@ def delete_mineru_token() -> dict:
 
 @router.post("/settings/host")
 def update_host(payload: HostUpdate) -> dict:
-    new_host = "127.0.0.1"
+    # Tailscale-only：只绑定检测到的 100.x，不接受 0.0.0.0/局域网手填。
     if payload.enable_remote:
-        # 本机模式下停用远程访问入口；Tailscale 检测函数保留以便将来恢复。
-        raise HTTPException(status_code=409, detail="远程访问（Tailscale）已停用，当前仅支持本机 127.0.0.1")
+        current = system_settings.tailscale_bind_host()
+        if not current:
+            raise HTTPException(status_code=409, detail="Tailscale 未连接，先连接后再启用")
+        system_settings.save_settings({"host": current})
+        return {"ok": True, "host": current, "restart_required": _current_bound_host() != current}
+    new_host = "127.0.0.1"
     system_settings.save_settings({"host": new_host})
     return {"ok": True, "host": new_host, "restart_required": _current_bound_host() != new_host}
 

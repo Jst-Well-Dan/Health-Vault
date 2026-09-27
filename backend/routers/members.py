@@ -1,6 +1,4 @@
 import os
-import re
-import secrets
 from typing import Any
 from pathlib import Path
 from urllib.parse import quote
@@ -11,15 +9,21 @@ from fastapi.responses import FileResponse
 
 from database import get_conn
 from models import AvatarPresetApply, MemberCreate, MemberUpdate
-from routers.common import json_dumps, json_loads, require_row
+from routers.common import json_loads, require_row
+from services.writes import (
+    ConflictError,
+    PayloadError,
+    ValidationError,
+    create_member_record,
+    update_member_record,
+    validate_member_key,
+)
 
 
 router = APIRouter(tags=["members"])
 # 顺序即优先级：同名时按这里的前后决定用哪张（不能是 set，否则解析结果随机）。
 AVATAR_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 MAX_AVATAR_BYTES = 5 * 1024 * 1024
-SAFE_KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
-ALLOWED_SPECIES = {"human", "cat", "dog", "other"}
 
 
 def _avatar_storage_dir() -> Path:
@@ -142,45 +146,21 @@ def _member_dict(row: Any) -> dict[str, Any]:
 
 
 def _validate_key(key: str) -> str:
-    key = str(key or "").strip()
-    if not SAFE_KEY_RE.fullmatch(key):
-        raise HTTPException(status_code=422, detail="成员 key 只能包含 1-64 位英文字母、数字、下划线或连字符，且必须以字母或数字开头")
-    return key
+    try:
+        return validate_member_key(key)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-def _generate_key(conn: Any, species: str) -> str:
-    prefix = "member" if species == "human" else "pet"
-    for _ in range(10):
-        key = f"{prefix}-{secrets.token_hex(4)}"
-        exists = conn.execute("SELECT 1 FROM members WHERE key = ?", (key,)).fetchone()
-        if not exists:
-            return key
-    raise HTTPException(status_code=500, detail="无法生成唯一成员 key")
-
-
-def _validate_member_sex(species: str, sex: Any) -> str | None:
-    if sex is None or not str(sex).strip():
-        return None
-    sex = str(sex).strip()
-    allowed_sex = {"男", "女"} if species == "human" else {"弟弟", "妹妹"}
-    if sex not in allowed_sex:
-        raise HTTPException(status_code=422, detail=f"{species} 的性别仅支持：{'、'.join(sorted(allowed_sex))}")
-    return sex
-
-
-def _validate_member_payload(data: dict[str, Any]) -> dict[str, Any]:
-    name = str(data.get("name") or "").strip()
-    if not name:
-        raise HTTPException(status_code=422, detail="成员姓名不能为空")
-    species = str(data.get("species") or "").strip()
-    if not species:
-        raise HTTPException(status_code=422, detail="species 不能为空")
-    if species not in ALLOWED_SPECIES:
-        raise HTTPException(status_code=422, detail=f"species 仅支持：{', '.join(sorted(ALLOWED_SPECIES))}")
-    data["sex"] = _validate_member_sex(species, data.get("sex"))
-    data["name"] = name
-    data["species"] = species
-    return data
+@router.post("/members", status_code=201)
+def create_member(payload: MemberCreate) -> dict[str, Any]:
+    try:
+        key = create_member_record(payload.model_dump(exclude_unset=True))
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return get_member(key)
 
 
 @router.get("/members")
@@ -191,37 +171,17 @@ def list_members(include_archived: bool = False) -> list[dict[str, Any]]:
         return [_member_dict(row) for row in rows]
 
 
-@router.post("/members", status_code=201)
-def create_member(payload: MemberCreate) -> dict[str, Any]:
-    data = _validate_member_payload(payload.model_dump(exclude_unset=True))
-    allowed = {
-        "key", "name", "full_name", "initial", "birth_date", "sex", "blood_type", "role",
-        "species", "species_detail", "sort_order", "breed", "home_date", "doctor", "allergies", "chronic", "notes",
-    }
-    with get_conn() as conn:
-        key = data.get("key")
-        if key:
-            key = _validate_key(key)
-            if conn.execute("SELECT 1 FROM members WHERE key = ?", (key,)).fetchone():
-                raise HTTPException(status_code=409, detail="成员 key 已存在")
-        else:
-            key = _generate_key(conn, data["species"])
-        data["key"] = key
-        if data.get("sort_order") is None:
-            max_sort_order = conn.execute("SELECT COALESCE(MAX(sort_order), 0) AS value FROM members").fetchone()["value"]
-            data["sort_order"] = max_sort_order + 10
-        fields = []
-        values = []
-        for field in allowed:
-            if field not in data:
-                continue
-            value = data[field]
-            if field in {"allergies", "chronic"}:
-                value = json_dumps(value)
-            fields.append(field)
-            values.append(value)
-        placeholders = ", ".join("?" for _ in fields)
-        conn.execute(f"INSERT INTO members ({', '.join(fields)}) VALUES ({placeholders})", values)
+@router.patch("/members/{key}")
+def update_member(key: str, payload: MemberUpdate) -> dict[str, Any]:
+    data = payload.model_dump(exclude_unset=True)
+    if not data:
+        return get_member(key)
+    try:
+        update_member_record(key, data)
+    except PayloadError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return get_member(key)
 
 
@@ -311,52 +271,3 @@ def get_member(key: str) -> dict[str, Any]:
     with get_conn() as conn:
         row = require_row(conn.execute("SELECT * FROM members WHERE key = ?", (key,)).fetchone(), "成员不存在")
         return _member_dict(row)
-
-
-@router.patch("/members/{key}")
-def update_member(key: str, payload: MemberUpdate) -> dict[str, Any]:
-    data = payload.model_dump(exclude_unset=True)
-    if not data:
-        return get_member(key)
-
-    allowed = {
-        "name", "full_name", "initial", "birth_date", "sex", "blood_type", "role",
-        "species", "species_detail", "sort_order", "breed", "home_date", "doctor", "allergies", "chronic", "notes", "archived_at",
-    }
-    if "name" in data:
-        name = str(data.get("name") or "").strip()
-        if not name:
-            raise HTTPException(status_code=422, detail="成员姓名不能为空")
-        data["name"] = name
-    if "species" in data:
-        species = str(data.get("species") or "").strip()
-        if not species:
-            raise HTTPException(status_code=422, detail="species 不能为空")
-        if species not in ALLOWED_SPECIES:
-            raise HTTPException(status_code=422, detail=f"species 仅支持：{', '.join(sorted(ALLOWED_SPECIES))}")
-        data["species"] = species
-
-    if "sex" in data:
-        current_species = data.get("species")
-        if current_species is None:
-            with get_conn(log_writes=False) as conn:
-                row = require_row(conn.execute("SELECT species FROM members WHERE key = ?", (key,)).fetchone(), "成员不存在")
-                current_species = row["species"]
-        data["sex"] = _validate_member_sex(current_species, data.get("sex"))
-
-    updates = []
-    values = []
-    for field, value in data.items():
-        if field not in allowed:
-            continue
-        if field in {"allergies", "chronic"}:
-            value = json_dumps(value)
-        updates.append(f"{field} = ?")
-        values.append(value)
-    updates.append("updated_at = datetime('now','localtime')")
-    values.append(key)
-
-    with get_conn() as conn:
-        require_row(conn.execute("SELECT key FROM members WHERE key = ?", (key,)).fetchone(), "成员不存在")
-        conn.execute(f"UPDATE members SET {', '.join(updates)} WHERE key = ?", values)
-    return get_member(key)

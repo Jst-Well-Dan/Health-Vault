@@ -22,12 +22,37 @@ import lifecycle
 
 
 def bind_guard_error(bind_host: str) -> str | None:
-    """本应用没有登录凭据，因此只允许监听本机地址（fail-closed）。"""
-    if system_settings.is_loopback_host(bind_host):
+    """Tailscale-only：只允许本机 + Tailscale 100.x，其余拒绝（fail-closed）。"""
+    if system_settings.is_allowed_bind_host(bind_host):
         return None
     return (
-        f"拒绝启动：绑定到非本机地址（{bind_host}）会让局域网内任何人直接读写健康档案。"
-        "本版本没有登录鉴权，因此只允许 127.0.0.1；请把监听地址改回本机。"
+        f"拒绝启动：{bind_host} 不是本机也不是 Tailscale 地址。"
+        "只允许 127.0.0.1 或 Tailscale 100.x；不要设为 0.0.0.0 或局域网 IP。"
+    )
+
+
+def port_conflict_error(bind_host: str, port: int) -> str | None:
+    """启动前预检端口：被占用时给可执行的下一步，而不是 uvicorn 的原始报错。"""
+    import socket
+
+    try:
+        addr_infos = socket.getaddrinfo(bind_host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        return f"无法解析监听地址 {bind_host}（{exc}）"
+    for family, socktype, proto, _, sockaddr in addr_infos:
+        probe = socket.socket(family, socktype, proto)
+        try:
+            probe.bind(sockaddr)
+        except OSError:
+            continue
+        finally:
+            probe.close()
+        return None
+    return (
+        f"端口被占用：{bind_host}:{port} 已有进程在监听，可能是网页“立即重启”留下的子进程。"
+        "先结束旧进程再启动：新开 PowerShell 跑 "
+        "Get-NetTCPConnection -LocalPort 8000 | Format-Table LocalAddress,OwningProcess,State -AutoSize"
+        "，记下 OwningProcess 列的数字，再跑 taskkill /F /PID <数字>，然后重新 npm start。"
     )
 
 
@@ -46,12 +71,17 @@ if __name__ == "__main__":
     if guard:
         print(guard, file=sys.stderr, flush=True)
         sys.exit(1)
+    port = int(os.getenv("HEALTH_PORT", "8000"))
+    conflict = port_conflict_error(bind_host, port)
+    if conflict:
+        print(conflict, file=sys.stderr, flush=True)
+        sys.exit(1)
     if os.getenv("HEALTH_RESTART_CHILD") == "1":
         lifecycle.mark_restart_child()
     config = uvicorn.Config(
         "main:app",
         host=bind_host,
-        port=int(os.getenv("HEALTH_PORT", "8000")),
+        port=port,
         log_level="warning",
     )
     lifecycle.run_server(config)

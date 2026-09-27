@@ -1,8 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from database import get_conn
 from models import WeightCreate
-from routers.common import require_row, row_to_dict, rows_to_dicts
+from routers.common import rows_to_dicts
+from services.writes import PayloadError, create_weight_record, delete_weight_record
 
 
 router = APIRouter(tags=["weight"])
@@ -21,17 +22,12 @@ def list_weight(member: str) -> list[dict]:
 
 @router.post("/weight")
 def create_weight(payload: WeightCreate) -> dict:
-    with get_conn() as conn:
-        cur = conn.execute(
-            "INSERT INTO weight_log (member_key, date, weight_kg, notes) VALUES (?, ?, ?, ?)",
-            (payload.member_key, payload.date, payload.weight_kg, payload.notes),
-        )
-        return row_to_dict(conn.execute("SELECT * FROM weight_log WHERE id = ?", (cur.lastrowid,)).fetchone())
+    return create_weight_record(**payload.model_dump())
 
 
 @router.delete("/weight/{weight_id}")
 def delete_weight(weight_id: int) -> dict:
-    with get_conn() as conn:
-        require_row(conn.execute("SELECT id FROM weight_log WHERE id = ?", (weight_id,)).fetchone())
-        conn.execute("DELETE FROM weight_log WHERE id = ?", (weight_id,))
-    return {"ok": True}
+    try:
+        return delete_weight_record(weight_id)
+    except PayloadError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

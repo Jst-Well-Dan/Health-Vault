@@ -184,16 +184,10 @@ WEIGHTS = [
     ("demo-cat", "2026-04-01", 4.10, "家庭称重"),
 ]
 
-REMINDERS = [
-    ("demo-self", "2026-05-18", "复查血脂和维生素D", "体检", "normal", 0, None, "年度体检后3个月复查。"),
-    ("demo-self", "2026-04-05", "记录花粉季鼻炎症状", "记事", "normal", 1, "2026-04-05 20:00:00", "喷剂有效，无明显嗜睡。"),
-    ("demo-parent", "2026-05-15", "慢病门诊随访", "就医", "high", 0, None, "携带家庭血压记录。"),
-    ("demo-parent", "2026-06-15", "复查肝功能和血脂", "检验", "normal", 0, None, "他汀用药后复查。"),
-    ("demo-cat", "2026-04-25", "体外驱虫", "驱虫", "normal", 0, None, "按月提醒。"),
-    ("demo-cat", "2026-06-14", "洁牙评估", "就医", "normal", 0, None, "年度体检建议半年内评估。"),
-    ("demo-cat", "2026-04-20", "体外驱虫", "驱虫", "normal", 1, "2026-04-20 20:00:00", "完成本月体外驱虫。"),
-    ("demo-cat", "2026-04-18", "洗澡", "洗澡", "normal", 1, "2026-04-18 19:30:00", "洗澡后状态正常。"),
-    ("demo-cat", "2026-03-28", "剪指甲", "护理", "normal", 1, "2026-03-28 21:00:00", "完成，状态稳定。"),
+PET_CARE_LOGS = [
+    ("demo-cat", "2026-04-20", "驱虫", "完成本月体外驱虫。"),
+    ("demo-cat", "2026-04-18", "洗澡", "洗澡后状态正常。"),
+    ("demo-cat", "2026-03-28", "换猫砂", "整盆换新，状态稳定。"),
 ]
 
 ATTACHMENTS = [
@@ -258,7 +252,7 @@ def seed_mock_data(reset: bool = False) -> None:
     write_mock_files()
     with get_conn() as conn:
         if reset:
-            for table in ["attachments", "reminders", "weight_log", "meds", "lab_results", "visits", "members"]:
+            for table in ["attachments", "pet_care_logs", "weight_log", "meds", "lab_results", "visits", "members"]:
                 conn.execute("DELETE FROM " + table)
         else:
             row = conn.execute("SELECT COUNT(*) AS c FROM members WHERE key LIKE 'demo-%'").fetchone()
@@ -305,11 +299,11 @@ def seed_mock_data(reset: bool = False) -> None:
         )
         conn.executemany(
             """
-            INSERT INTO reminders
-              (member_key, date, title, kind, priority, done, done_at, notes, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual')
+            INSERT INTO pet_care_logs
+              (member_key, date, kind, notes)
+            VALUES (?, ?, ?, ?)
             """,
-            REMINDERS,
+            PET_CARE_LOGS,
         )
         conn.executemany(
             """

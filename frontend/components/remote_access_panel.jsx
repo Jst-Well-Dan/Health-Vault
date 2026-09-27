@@ -10,6 +10,8 @@ function RemoteAccessPanel({ onClose }) {
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
   const [busyAutostart, setBusyAutostart] = React.useState(false);
+  const [busyRemote, setBusyRemote] = React.useState(false);
+  const [busyRestart, setBusyRestart] = React.useState(false);
 
   React.useEffect(() => { const { body, documentElement } = document; const a = body.style.overflow; const b = documentElement.style.overflow; body.style.overflow = 'hidden'; documentElement.style.overflow = 'hidden'; return () => { body.style.overflow = a; documentElement.style.overflow = b; }; }, []);
 
@@ -40,10 +42,16 @@ function RemoteAccessPanel({ onClose }) {
     {error && <div className="sketch" style={{ padding: 10, marginBottom: 12, color: 'var(--danger)' }}>{error}</div>}
     {notice && <div className="sketch" style={{ padding: 10, marginBottom: 12 }}>{notice}</div>}
 
-    <DashLabel>监听地址</DashLabel>
+    <DashLabel>监听地址（Tailscale-only）</DashLabel>
     <div className="sketch" style={{ padding: 12, marginBottom: 16 }}>
-      <div className="mono">本机模式：仅监听 <strong>127.0.0.1</strong>，远程访问（Tailscale）已停用。</div>
-      {info && <div className="mono" style={{ color: 'var(--ink-soft)', marginTop: 6 }}>当前生效：{info.current_host}{info.bind_warning ? `（${info.bind_warning}）` : ''}</div>}
+      <div className="mono">只允许 <strong>127.0.0.1</strong> 或 Tailscale <strong>100.x</strong>，拒绝 0.0.0.0/局域网。无登录鉴权，tailnet 内设备直接读写。</div>
+      {info && <div className="mono" style={{ color: 'var(--ink-soft)', marginTop: 6 }}>当前生效：{info.current_host}{info.pending_host && info.pending_host !== info.current_host ? ` → 待重启为 ${info.pending_host}` : ''}{info.bind_warning ? `（${info.bind_warning}）` : ''}</div>}
+      {info && <div className="mono" style={{ color: 'var(--ink-soft)', marginTop: 6 }}>Tailscale：{!info.tailscale?.installed ? '未安装' : !info.tailscale?.connected ? '未连接' : `已连接 ${info.tailscale.ip}`}</div>}
+      <div style={{ display: 'flex', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+        <Btn primary disabled={busyRemote || !info?.tailscale?.connected} onClick={async () => { setBusyRemote(true); setNotice(''); setError(''); try { const r = await remoteFetchJson('/api/settings/host', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable_remote: true }) }); setNotice(`已切到 Tailscale ${r.host}，点“立即重启”生效（约10秒）。`); await refresh(); } catch (err) { setError(err.message || '启用失败'); } finally { setBusyRemote(false); } }}>{busyRemote ? '处理中…' : '允许 Tailscale 访问'}</Btn>
+        <Btn ghost disabled={busyRemote} onClick={async () => { setBusyRemote(true); setNotice(''); setError(''); try { await remoteFetchJson('/api/settings/host', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable_remote: false }) }); setNotice('已切回本机 127.0.0.1，点“立即重启”生效。'); await refresh(); } catch (err) { setError(err.message || '切回失败'); } finally { setBusyRemote(false); } }}>切回本机</Btn>
+        {info?.restart_required && <Btn primary disabled={busyRestart || (!!info?.tailscale && !info.tailscale.connected && info.pending_host !== '127.0.0.1')} onClick={async () => { setBusyRestart(true); setError(''); try { await window.relaunchApp(info.pending_host); } catch (err) { setError(err.message || '重启失败'); setBusyRestart(false); } }}>{busyRestart ? '重启中…' : '立即重启'}</Btn>}
+      </div>
     </div>
 
     <DashLabel>开机自启</DashLabel>

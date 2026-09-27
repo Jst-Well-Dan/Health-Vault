@@ -1,7 +1,7 @@
 // Member detail screen backed by REST API data.
 
-const HUMAN_TABS = ['概览', '体检报告', '就医记录', '用药', '附件库', '提醒'];
-const PET_TABS = ['概览', '记事', '疫苗接种', '就医记录', '用药', '体重趋势', '附件库', '提醒'];
+const HUMAN_TABS = ['概览', '体检报告', '就医记录', '用药', '附件库'];
+const PET_TABS = ['概览', '记事', '疫苗接种', '就医记录', '用药', '体重趋势', '附件库'];
 const PET_CARE_KINDS = ['驱虫', '洗澡', '换猫砂'];
 const PET_CARE_KIND_SET = new Set(PET_CARE_KINDS);
 const PET_KIND_LABELS = {
@@ -54,6 +54,18 @@ const formatValue = (value, digits = 1) => {
 const formatWeight = (value) => {
   const n = extractNumber(value);
   return n === null ? (value ?? '—') : n.toFixed(2);
+};
+
+const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六'];
+const friendlyDate = (iso) => {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso || '';
+  return `${d.getMonth() + 1} 月 ${d.getDate()} 日 · 星期${WEEKDAYS[d.getDay()]}`;
+};
+const CARE_NOTES_HINT = {
+  '驱虫': '例如：外驱，用了拜耳（可选）',
+  '洗澡': '例如：用了新沐浴露（可选）',
+  '换猫砂': '例如：整盆换新（可选）',
 };
 
 const petAgeAtText = (birthDate, atDate) => {
@@ -229,7 +241,7 @@ const visitContextText = ({ member, report, visit, labs, meds, attachments, conc
       med.dose ? `  剂量: ${med.dose}` : '',
       med.freq ? `  频次: ${med.freq}` : '',
       med.route ? `  途径: ${med.route}` : '',
-      med.start_date || med.end_date ? `  日期: ${med.start_date || '—'} 至 ${med.ongoing ? '仍在使用' : (med.end_date || '—')}` : '',
+      med.start_date || med.end_date ? `  日期: ${med.start_date || '—'} 至 ${isMedActive(med) ? '仍在使用' : (med.end_date || '—')}` : '',
       med.notes ? `  备注: ${med.notes}` : '',
     ])).join('\n')),
     sectionText('相关附件', attachments.map(a => `- ${a.title || a.filename || a.file} (${a.filename || a.file_path || '未记录文件名'})`).join('\n')),
@@ -260,8 +272,10 @@ const speciesText = (m, weights) => {
   const latestWeight = weights[weights.length - 1];
   const type = m.species_detail || ({ cat: '猫', dog: '狗', other: '其他宠物' }[m.species] || '宠物');
   const breed = m.breed ? ` · ${m.breed}` : '';
-  const home = m.home_date ? ` · 到家 ${m.home_date}` : '';
-  return `${type}${breed} · ${sex || '未录性别'} · ${memberAge(m.birth_date)}岁${home}${latestWeight ? ` · ${formatWeight(latestWeight.weight_kg)} kg` : ''}`;
+  const homeDays = typeof familyDaysSince === 'function' ? familyDaysSince(m.home_date) : null;
+  const home = homeDays === null ? '' : ` · 到家${homeDays}天`;
+  const age = typeof petAgeText === 'function' ? petAgeText(m.birth_date) : `${memberAge(m.birth_date)}岁`;
+  return `${type}${breed} · ${sex || '未录性别'} · ${age}${home}${latestWeight ? ` · ${formatWeight(latestWeight.weight_kg)} kg` : ''}`;
 };
 
 /* ── Static enriched detail for known reports ──────────────── */
@@ -693,7 +707,7 @@ const ReportDetail = ({ report, member, data, memberKey, onClose }) => {
                         {brand && <div className="mono" style={{ color: 'var(--ink-ghost)', fontSize: 10 }}>{brand}</div>}
                         <div className="mono" style={{ color: 'var(--ink-soft)', fontSize: 10, marginTop: 2 }}>{usage || '用法未录'}</div>
                         <div className="mono" style={{ color: 'var(--ink-ghost)', fontSize: 10, marginTop: 1 }}>
-                          {m.start_date || '?'} → {m.ongoing ? '至今' : (m.end_date || '?')}
+                          {m.start_date || '?'} → {isMedActive(m) ? '至今' : (m.end_date || '?')}
                         </div>
                       </div>
                       <Chip variant={cat.color}>{cat.label}</Chip>
@@ -779,7 +793,7 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
     labs: [],
     meds: [],
     weights: [],
-    reminders: [],
+    careLogs: [],
     attachments: [],
   });
   const [loading, setLoading] = React.useState(false);
@@ -796,12 +810,12 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
     setLoading(true);
     setError('');
     try {
-      const [visits, labs, meds, weights, reminders, attachments] = await Promise.all([
+      const [visits, labs, meds, weights, careLogs, attachments] = await Promise.all([
         apiJson(`/api/visits?member=${encodeURIComponent(member.key)}&limit=50`),
         apiJson(`/api/labs?member=${encodeURIComponent(member.key)}`),
         apiJson(`/api/meds?member=${encodeURIComponent(member.key)}`),
         apiJson(`/api/weight?member=${encodeURIComponent(member.key)}`),
-        apiJson(`/api/reminders?member=${encodeURIComponent(member.key)}${member.species === 'cat' ? '&include_done=true' : ''}`),
+        apiJson(`/api/pet-care?member=${encodeURIComponent(member.key)}`),
         apiJson(`/api/attachments?member=${encodeURIComponent(member.key)}`),
       ]);
       const nextData = {
@@ -809,7 +823,7 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
         labs,
         meds,
         weights,
-        reminders,
+        careLogs,
         attachments,
       };
       setData(nextData);
@@ -849,30 +863,36 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
   const openCreate = (type) => setEditor({ type, item: null });
   const openChooser = () => setEditor({ type: 'choose', item: null });
   const editItem = (type, item) => setEditor({ type, item });
+  // 顶部按钮按当前 tab 直达：记事页直开记事表单，体重页聚焦到输入行，其他页才弹二选一。
+  const focusWeightInput = () => {
+    const el = document.getElementById('quick-weight-input');
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.focus({ preventScroll: true });
+    } else {
+      openCreate('weight');
+    }
+  };
+  const heroAdd = () => {
+    if (tab === '记事') { openCreate('care'); return; }
+    if (tab === '体重趋势') { focusWeightInput(); return; }
+    openChooser();
+  };
 
-  const saveReminder = (values, item) => mutateDaily(() => {
+  const saveCareLog = (values, item) => mutateDaily(() => {
     const payload = cleanPayload({ member_key: member.key, ...values });
     return item
-      ? apiWrite(`/api/reminders/${item.id}`, 'PATCH', payload)
-      : apiWrite('/api/reminders', 'POST', payload);
+      ? apiWrite(`/api/pet-care/${item.id}`, 'PATCH', payload)
+      : apiWrite('/api/pet-care', 'POST', payload);
   });
-  const saveCareLog = (values, item) => mutateDaily(() => {
-    const payload = cleanPayload({ member_key: member.key, done: true, ...values });
-    return item
-      ? apiWrite(`/api/reminders/${item.id}`, 'PATCH', payload)
-      : apiWrite('/api/reminders', 'POST', payload);
-  });
-  const completeReminder = (item) => {
-    if (!window.confirm(`标记提醒「${item.title}」为完成？`)) return;
-    mutateDaily(() => apiWrite(`/api/reminders/${item.id}`, 'PATCH', { done: true }));
+  // 速记条一键记事：日期默认今天，只记 kind，标题栏直接显示 kind。
+  const quickCare = (kind) => {
+    if (!PET_CARE_KIND_SET.has(kind)) return;
+    saveCareLog({ date: todayIso(), kind, notes: '' });
   };
-  const skipReminder = (item) => {
-    if (!window.confirm(`跳过提醒「${item.title}」并进入下一个周期？`)) return;
-    mutateDaily(() => apiWrite(`/api/reminders/${item.id}/skip`, 'POST'));
-  };
-  const deleteReminder = (item) => {
-    if (!window.confirm(`删除提醒「${item.title}」？`)) return;
-    mutateDaily(() => apiWrite(`/api/reminders/${item.id}`, 'DELETE'));
+  const deleteCareLog = (item) => {
+    if (!window.confirm(`删除记事「${item.date} ${item.kind}」？`)) return;
+    mutateDaily(() => apiWrite(`/api/pet-care/${item.id}`, 'DELETE'));
   };
   const saveMed = (values, item) => mutateDaily(() => {
     const payload = cleanPayload({ member_key: member.key, ...values });
@@ -882,7 +902,12 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
   });
   const stopMed = (item) => {
     if (!window.confirm(`停用「${item.name}」？`)) return;
-    mutateDaily(() => apiWrite(`/api/meds/${item.id}`, 'PATCH', { ongoing: false, end_date: item.end_date || todayIso() }));
+    const today = todayIso();
+    const end = String(item.end_date || '').slice(0, 10);
+    const truncated = end && end > today;
+    const trace = truncated ? `原定结束 ${end}，实际停于 ${today}` : '';
+    const notes = [item.notes, trace].filter(Boolean).join('；');
+    mutateDaily(() => apiWrite(`/api/meds/${item.id}`, 'PATCH', { ongoing: false, end_date: end || today, notes }));
   };
   const deleteMed = (item) => {
     if (!window.confirm(`删除用药「${item.name}」？`)) return;
@@ -1000,6 +1025,13 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
     const visit = data.visits.find(v => v.id === visitId);
     if (visit) editItem('visit', visit);
   };
+  // 每种护理最近一次已完成的日期，用于速记条小字提示。
+  const lastCareDate = {};
+  data.careLogs
+    .filter(r => PET_CARE_KIND_SET.has(r.kind))
+    .forEach(r => {
+      if (!lastCareDate[r.kind] || (r.date || '') > (lastCareDate[r.kind] || '')) lastCareDate[r.kind] = r.date;
+    });
   return (
     <div className="binder" style={{ boxShadow: '4px 4px 0 var(--line)' }}>
       <aside className="binder__side">
@@ -1043,7 +1075,7 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
           </div>
           <div className="member-hero__actions" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <Btn ghost onClick={() => onEditMember?.(member)}>编辑资料</Btn>
-            <Btn primary onClick={openChooser}>+ 新增记录</Btn>
+            {isCat && <Btn primary onClick={heroAdd}>+ 新增记录</Btn>}
           </div>
         </div>
 
@@ -1067,16 +1099,14 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
                   labs={data.labs}
                   visits={visitReports}
                   meds={data.meds}
-                  reminders={data.reminders}
                   attachments={data.attachments}
                   onOpen={setDetail}
                 />
               )}
-              {!isCat && tab === '体检报告' && <TabCheckup data={data} memberKey={member.key} reports={visitReports.filter(isCheckupReport)} onOpen={setDetail} onAddLab={() => openCreate('lab')} onEditLab={(item) => editItem('lab', item)} onDeleteLab={deleteLab} onEditVisit={editVisitId} />}
+              {!isCat && tab === '体检报告' && <TabCheckup data={data} memberKey={member.key} reports={visitReports.filter(isCheckupReport)} onOpen={setDetail} />}
               {!isCat && tab === '就医记录' && <TabReports reports={visitReports} kind="就医" onOpen={setDetail} onAdd={() => openCreate('visit')} onEdit={editVisitReport} onDelete={deleteVisit} />}
               {!isCat && tab === '用药' && <TabMeds meds={data.meds} visits={data.visits} onAdd={() => openCreate('med')} onEdit={(item) => editItem('med', item)} onStop={stopMed} onDelete={deleteMed} />}
               {!isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
-              {!isCat && tab === '提醒' && <TabReminders items={data.reminders} onAdd={() => openCreate('reminder')} onEdit={(item) => editItem('reminder', item)} onDone={completeReminder} onSkip={skipReminder} onDelete={deleteReminder} />}
 
               {isCat && tab === '概览' && (
                 <TabPetOverview
@@ -1085,18 +1115,23 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
                   visits={data.visits}
                   meds={data.meds}
                   weights={data.weights}
-                  reminders={data.reminders}
+                  careLogs={data.careLogs}
                   attachments={data.attachments}
                   onOpen={setDetail}
                 />
               )}
-              {isCat && tab === '记事' && <TabPetCare reminders={data.reminders} attachments={data.attachments} onAdd={() => openCreate('care')} onEdit={(item) => editItem('care', item)} onDelete={deleteReminder} />}
+              {isCat && tab === '记事' && (
+                <PetQuickBar mode="care" weights={data.weights} lastCare={lastCareDate} saving={saving} onQuickCare={quickCare} onQuickWeight={saveWeight} />
+              )}
+              {isCat && tab === '记事' && <TabPetCare careLogs={data.careLogs} attachments={data.attachments} onAdd={() => openCreate('care')} onEdit={(item) => editItem('care', item)} onDelete={deleteCareLog} />}
               {isCat && tab === '疫苗接种' && <TabVax labs={data.labs} attachments={data.attachments} onAddLab={() => openCreate('lab')} />}
               {isCat && tab === '就医记录' && <TabReports reports={visitReports} kind="就医" onOpen={setDetail} onAdd={() => openCreate('visit')} onEdit={editVisitReport} onDelete={deleteVisit} />}
               {isCat && tab === '用药' && <TabMeds meds={data.meds} visits={data.visits} onAdd={() => openCreate('med')} onEdit={(item) => editItem('med', item)} onStop={stopMed} onDelete={deleteMed} />}
-              {isCat && tab === '体重趋势' && <TabPetWeight member={member} weights={data.weights} onAdd={() => openCreate('weight')} onDelete={deleteWeight} />}
+              {isCat && tab === '体重趋势' && (
+                <PetQuickBar mode="weight" weights={data.weights} lastCare={lastCareDate} saving={saving} onQuickCare={quickCare} onQuickWeight={saveWeight} />
+              )}
+              {isCat && tab === '体重趋势' && <TabPetWeight member={member} weights={data.weights} onDelete={deleteWeight} />}
               {isCat && tab === '附件库' && <TabAttachments reports={attachmentReports} onOpen={setDetail} onEditAttachment={(report) => setAttachmentEditor(report.raw)} onDeleteAttachment={deleteAttachment} />}
-              {isCat && tab === '提醒' && <TabReminders items={data.reminders.filter(r => !r.done)} onAdd={() => openCreate('reminder')} onEdit={(item) => editItem('reminder', item)} onDone={completeReminder} onSkip={skipReminder} onDelete={deleteReminder} />}
             </>
           )}
         </div>
@@ -1117,7 +1152,6 @@ const ScreenMember = ({ members = [], memberKey, onChangeMember, onDataChanged, 
             saving={saving}
             onClose={() => setEditor(null)}
             onChoose={openCreate}
-            onSaveReminder={saveReminder}
             onSaveCareLog={saveCareLog}
             visits={data.visits}
             onSaveVisit={saveVisit}
@@ -1188,12 +1222,10 @@ const AttachmentEditorModal = ({ attachment, visits = [], saving, onClose, onSav
   );
 };
 
-const DailyEditor = ({ editor, member, isPetMember, visits = [], saving, onClose, onChoose, onSaveReminder, onSaveCareLog, onSaveVisit, onSaveLab, onSaveMed, onSaveWeight }) => {
+const DailyEditor = ({ editor, member, isPetMember, visits = [], saving, onClose, onChoose, onSaveCareLog, onSaveVisit, onSaveLab, onSaveMed, onSaveWeight }) => {
   const title = editor.type === 'choose'
     ? '新增记录'
-    : editor.type === 'reminder'
-      ? editor.item ? '编辑提醒' : '新增提醒'
-      : editor.type === 'visit'
+    : editor.type === 'visit'
         ? (editor.item ? '编辑就诊记录' : '新增就诊记录')
         : editor.type === 'lab'
           ? (editor.item ? '编辑化验指标' : '新增化验指标')
@@ -1226,32 +1258,25 @@ const DailyEditor = ({ editor, member, isPetMember, visits = [], saving, onClose
           <Btn ghost onClick={onClose}>关闭</Btn>
         </div>
         {editor.type === 'choose' && (
-          <div className="daily-choice-grid">
-            {/* 就诊记录与化验指标仅由 Agent 写入，已移除手动入口 */}
-            <button className="daily-choice" onClick={() => onChoose('reminder')}>
-              <span>提醒</span>
-              <small>复诊、复查、驱虫、疫苗等</small>
-            </button>
-            <button className="daily-choice" onClick={() => onChoose('med')}>
-              <span>用药</span>
-              <small>药名、剂量、频次、起止日期</small>
-            </button>
+          <div className="choose-list">
+            {/* 就诊记录与化验指标仅由 Agent 写入，提醒、用药也已移出新增记录（各 tab 内仍可操作） */}
             {isPetMember && (
-              <button className="daily-choice" onClick={() => onChoose('care')}>
-                <span>记事</span>
-                <small>驱虫、洗澡、换猫砂</small>
+              <button className="choose-row" onClick={() => onChoose('care')}>
+                <QuickIcon name="note" />
+                <span><span className="choose-row__t">记事</span><br /><small>驱虫、洗澡、换猫砂</small></span>
+                <span className="choose-row__arr">›</span>
               </button>
             )}
-            <button className="daily-choice" onClick={() => onChoose('weight')}>
-              <span>体重</span>
-              <small>日常体重记录</small>
+            <button className="choose-row" onClick={() => onChoose('weight')}>
+              <QuickIcon name="weight" />
+              <span><span className="choose-row__t">体重</span><br /><small>日常体重记录</small></span>
+              <span className="choose-row__arr">›</span>
             </button>
           </div>
         )}
-        {editor.type === 'reminder' && <ReminderForm item={editor.item} saving={saving} onSubmit={onSaveReminder} onCancel={onClose} />}
         {editor.type === 'visit' && <VisitForm item={editor.item} saving={saving} onSubmit={onSaveVisit} onCancel={onClose} />}
         {editor.type === 'lab' && <LabForm item={editor.item} visits={visits} saving={saving} onSubmit={onSaveLab} onCancel={onClose} />}
-        {editor.type === 'care' && <CareLogForm item={editor.item} saving={saving} onSubmit={onSaveCareLog} onCancel={onClose} />}
+        {editor.type === 'care' && <CareLogForm item={editor.item} member={member} saving={saving} onSubmit={onSaveCareLog} onCancel={onClose} />}
         {editor.type === 'med' && <MedForm item={editor.item} saving={saving} onSubmit={onSaveMed} onCancel={onClose} />}
         {editor.type === 'weight' && <WeightForm saving={saving} onSubmit={onSaveWeight} onCancel={onClose} />}
       </div>
@@ -1352,53 +1377,31 @@ const LabForm = ({ item, visits = [], saving, onSubmit, onCancel }) => {
   );
 };
 
-const ReminderForm = ({ item, saving, onSubmit, onCancel }) => {
-  const [form, setForm] = React.useState({
-    date: item?.date || todayIso(),
-    title: item?.title || '',
-    kind: item?.kind || '复查',
-    priority: item?.priority || 'normal',
-    notes: item?.notes || '',
-  });
-  const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
-  return (
-    <form className="daily-form" onSubmit={(e) => { e.preventDefault(); onSubmit(form, item); }}>
-      <label>日期<input required type="date" value={form.date} onChange={e => set('date', e.target.value)} /></label>
-      <label>标题<input required value={form.title} onChange={e => set('title', e.target.value)} placeholder="例如：复查血脂" /></label>
-      <label>类型<input value={form.kind} onChange={e => set('kind', e.target.value)} placeholder="复查 / 就医 / 驱虫 / 洗澡 / 换猫砂" /></label>
-      <label>优先级<select value={form.priority} onChange={e => set('priority', e.target.value)}>
-        <option value="normal">普通</option>
-        <option value="high">重要</option>
-        <option value="low">低</option>
-      </select></label>
-      <label className="span-2">备注<textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows="3" /></label>
-      <div className="form-actions">
-        <Btn ghost onClick={onCancel}>取消</Btn>
-        <Btn primary type="submit">{saving ? '保存中...' : '保存'}</Btn>
-      </div>
-    </form>
-  );
-};
-
-const CareLogForm = ({ item, saving, onSubmit, onCancel }) => {
+const CareLogForm = ({ item, member, saving, onSubmit, onCancel }) => {
   const [form, setForm] = React.useState({
     date: item?.date || todayIso(),
     kind: PET_CARE_KIND_SET.has(item?.kind) ? item.kind : PET_CARE_KINDS[0],
-    title: item?.title || '',
     notes: item?.notes || '',
   });
   const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
+  // 记事只保留 kind + notes：标题栏显示 kind，备注进徽章。
   return (
-    <form className="daily-form" onSubmit={(e) => { e.preventDefault(); onSubmit({ ...form, title: form.title || form.kind }, item); }}>
-      <label>日期<input required type="date" value={form.date} onChange={e => set('date', e.target.value)} /></label>
-      <label>类型<select required value={form.kind} onChange={e => set('kind', e.target.value)}>
-        {PET_CARE_KINDS.map(kind => <option key={kind} value={kind}>{kind}</option>)}
-      </select></label>
-      <label>备注标题<input value={form.title} onChange={e => set('title', e.target.value)} placeholder={`例如：${form.kind}（可选）`} /></label>
-      <label className="span-2">备注<textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows="2" /></label>
+    <form className="journal" onSubmit={(e) => { e.preventDefault(); onSubmit({ ...form }, item); }}>
+      <span className="tape" aria-hidden="true" />
+      <div className="j-date">
+        <span>{friendlyDate(form.date)}</span>
+        <input type="date" required value={form.date} onChange={e => set('date', e.target.value)} aria-label="日期" />
+      </div>
+      <div className="j-hand">{item ? `改一笔：${form.kind}` : `今天给${member?.name || '它'}${form.kind}！`}</div>
+      <div className="j-chips">
+        {PET_CARE_KINDS.map(kind => (
+          <button key={kind} type="button" className={`j-chip${form.kind === kind ? ' on' : ''}`} onClick={() => set('kind', kind)}>{kind}</button>
+        ))}
+      </div>
+      <input className="j-title" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder={CARE_NOTES_HINT[form.kind] || '写一句备注，比如：外驱'} aria-label="备注" />
       <div className="form-actions">
         <Btn ghost onClick={onCancel}>取消</Btn>
-        <Btn primary type="submit">{saving ? '保存中...' : item ? '保存' : '记录'}</Btn>
+        <Btn primary type="submit">{saving ? '保存中…' : item ? '保存' : '记录'}</Btn>
       </div>
     </form>
   );
@@ -1412,22 +1415,17 @@ const MedForm = ({ item, saving, onSubmit, onCancel }) => {
     route: item?.route || '',
     start_date: item?.start_date || todayIso(),
     end_date: item?.end_date || '',
-    ongoing: item?.ongoing ?? true,
     notes: item?.notes || '',
   });
   const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
   return (
-    <form className="daily-form" onSubmit={(e) => { e.preventDefault(); onSubmit(form, item); }}>
+    <form className="daily-form" onSubmit={(e) => { e.preventDefault(); onSubmit({ ...form, ongoing: form.end_date ? form.end_date > todayIso() : (item?.ongoing ?? true) }, item); }}>
       <label>药名<input required value={form.name} onChange={e => set('name', e.target.value)} placeholder="例如：二甲双胍" /></label>
       <label>剂量<input value={form.dose} onChange={e => set('dose', e.target.value)} placeholder="例如：0.5g" /></label>
       <label>频次<input value={form.freq} onChange={e => set('freq', e.target.value)} placeholder="例如：2次/日" /></label>
       <label>途径<input value={form.route} onChange={e => set('route', e.target.value)} placeholder="口服 / 外用" /></label>
       <label>开始日期<input type="date" value={form.start_date || ''} onChange={e => set('start_date', e.target.value)} /></label>
       <label>结束日期<input type="date" value={form.end_date || ''} onChange={e => set('end_date', e.target.value)} /></label>
-      <label className="check span-2">
-        <input type="checkbox" checked={form.ongoing} onChange={e => set('ongoing', e.target.checked)} />
-        <span>仍在使用</span>
-      </label>
       <label className="span-2">备注<textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows="3" /></label>
       <div className="form-actions">
         <Btn ghost onClick={onCancel}>取消</Btn>
@@ -1441,13 +1439,17 @@ const WeightForm = ({ saving, onSubmit, onCancel }) => {
   const [form, setForm] = React.useState({ date: todayIso(), weight_kg: '', notes: '' });
   const set = (key, value) => setForm(prev => ({ ...prev, [key]: value }));
   return (
-    <form className="daily-form" onSubmit={(e) => { e.preventDefault(); onSubmit({ ...form, weight_kg: Number(form.weight_kg) }); }}>
-      <label>日期<input required type="date" value={form.date} onChange={e => set('date', e.target.value)} /></label>
-      <label>体重 kg<input required type="number" step="0.01" min="0" value={form.weight_kg} onChange={e => set('weight_kg', e.target.value)} placeholder="4.20" /></label>
-      <label className="span-2">备注<textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows="3" /></label>
+    <form className="journal" onSubmit={(e) => { e.preventDefault(); onSubmit({ ...form, weight_kg: Number(form.weight_kg) }); }}>
+      <span className="tape" aria-hidden="true" />
+      <div className="j-date">
+        <span>{friendlyDate(form.date)}</span>
+        <input type="date" required value={form.date} onChange={e => set('date', e.target.value)} aria-label="日期" />
+      </div>
+      <div className="j-hand">体重 <input className="j-winput" required type="number" step="0.01" min="0" inputMode="decimal" value={form.weight_kg} onChange={e => set('weight_kg', e.target.value)} placeholder="4.20" aria-label="体重 kg" /> kg</div>
+      <textarea className="j-note" value={form.notes} onChange={e => set('notes', e.target.value)} rows="2" placeholder="顺手写一行（可选）" aria-label="备注" />
       <div className="form-actions">
         <Btn ghost onClick={onCancel}>取消</Btn>
-        <Btn primary type="submit">{saving ? '保存中...' : '保存'}</Btn>
+        <Btn primary type="submit">{saving ? '保存中…' : '保存'}</Btn>
       </div>
     </form>
   );
@@ -1469,7 +1471,7 @@ const relationText = (items, emptyText) => {
   return list.length ? list.join(' / ') : emptyText;
 };
 
-const makeFocusItems = ({ member, labs, visits, meds, reminders }) => {
+const makeFocusItems = ({ member, labs, visits, meds }) => {
   const items = [];
   const recentVisits = visits.slice(0, 6);
   const diagnosisCounts = new Map();
@@ -1479,20 +1481,9 @@ const makeFocusItems = ({ member, labs, visits, meds, reminders }) => {
     diagnosisCounts.set(name, (diagnosisCounts.get(name) || 0) + 1);
   }));
   const repeated = Array.from(diagnosisCounts.entries()).sort((a, b) => b[1] - a[1])[0];
-  const activeMeds = meds.filter(m => m.ongoing);
+  const activeMeds = meds.filter(isMedActive);
   const abnormalLabs = latestByName(labs).filter(l => ['high', 'low', 'abnormal'].includes(l.status)).slice(0, 3);
-  const nextReminder = reminders.filter(r => !r.done).sort((a, b) => a.date.localeCompare(b.date))[0] || member.next_reminder;
   const latestVisit = recentVisits[0];
-
-  if (nextReminder) {
-    const delta = daysFromToday(nextReminder.date);
-    items.push({
-      title: nextReminder.title,
-      meta: `${dateLabel(nextReminder.date)} · ${nextReminder.kind || '提醒'}`,
-      body: delta === null ? '有一条未完成提醒需要回看。' : delta >= 0 ? `距离提醒还有 ${delta} 天。` : `已超过提醒日期 ${Math.abs(delta)} 天。`,
-      tone: delta !== null && delta < 0 ? 'danger' : 'accent',
-    });
-  }
 
   if (repeated && repeated[1] >= 2) {
     items.push({
@@ -1542,10 +1533,9 @@ const OverviewPanel = ({ title, right, children, className = '' }) => (
   </section>
 );
 
-const TabOverview = ({ member, labs, visits, meds = [], reminders = [], attachments = [], onOpen }) => {
-  const focusItems = makeFocusItems({ member, labs, visits, meds, reminders });
-  const pendingReminders = reminders.filter(r => !r.done).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 4);
-  const activeMeds = meds.filter(m => m.ongoing);
+const TabOverview = ({ member, labs, visits, meds = [], attachments = [], onOpen }) => {
+  const focusItems = makeFocusItems({ member, labs, visits, meds });
+  const activeMeds = meds.filter(isMedActive);
   const timeline = visits.slice(0, 6);
   const summary = [
     ['就诊记录', visits.length],
@@ -1604,29 +1594,6 @@ const TabOverview = ({ member, labs, visits, meds = [], reminders = [], attachme
       </div>
 
       <aside className="overview-side">
-        <OverviewPanel title="待办与提醒" right={pendingReminders.length ? `${pendingReminders.length} 条` : ''}>
-          {pendingReminders.length === 0 ? (
-            <div className="overview-empty small">暂无未完成提醒</div>
-          ) : (
-            <div className="reminder-stack">
-              {pendingReminders.map(r => {
-                const delta = daysFromToday(r.date);
-                return (
-                  <div key={r.id} className={`reminder-item ${delta !== null && delta < 0 ? 'is-overdue' : ''}`}>
-                    <div>
-                      <div className="reminder-title">{r.title}</div>
-                      <div className="mono reminder-meta">{r.kind || '提醒'} · {dateLabel(r.date)}</div>
-                    </div>
-                    <span className="mono reminder-delta">
-                      {delta === null ? '—' : delta === 0 ? '今天' : delta > 0 ? `${delta}天` : `过期${Math.abs(delta)}天`}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </OverviewPanel>
-
         <OverviewPanel title="风险与禁忌">
           <div className="risk-list">
             <div>
@@ -1724,7 +1691,7 @@ const MiniTrend = ({ memberKey, testName }) => {
 };
 
 /* ── Checkup Tab ─────────────────────────────────────────────── */
-const CheckupLabRow = ({ item, memberKey, autoExpanded, onEdit, onDelete }) => {
+const CheckupLabRow = ({ item, memberKey, autoExpanded }) => {
   const direction = labDirection(item);
   const abnormal = ['high', 'low', 'abnormal'].includes(direction);
   const [expanded, setExpanded] = React.useState(autoExpanded);
@@ -1742,10 +1709,6 @@ const CheckupLabRow = ({ item, memberKey, autoExpanded, onEdit, onDelete }) => {
         </div>
         <div className="mono ck-lab-unit">{item.u}</div>
         <div className="mono ck-lab-ref">{item.ref}</div>
-        <div className="ck-lab-actions">
-          {onEdit && item.raw && <Btn ghost onClick={(e) => { e.stopPropagation(); onEdit(item.raw); }}>编辑</Btn>}
-          {onDelete && item.raw && <Btn ghost onClick={(e) => { e.stopPropagation(); onDelete(item.raw); }}>删除</Btn>}
-        </div>
         <div className="mono ck-lab-chevron">{expanded ? '▲' : '▼'}</div>
       </div>
       {expanded && (
@@ -1757,7 +1720,7 @@ const CheckupLabRow = ({ item, memberKey, autoExpanded, onEdit, onDelete }) => {
   );
 };
 
-const TabCheckup = ({ data, memberKey, reports, onOpen, onAddLab, onEditLab, onDeleteLab, onEditVisit }) => {
+const TabCheckup = ({ data, memberKey, reports, onOpen }) => {
   const checkupReports = React.useMemo(() => (
     reports.slice().sort((a, b) => b.d.localeCompare(a.d))
   ), [reports]);
@@ -1832,7 +1795,6 @@ const TabCheckup = ({ data, memberKey, reports, onOpen, onAddLab, onEditLab, onD
             {extra.conclusion && (
               <span className="mono checkup-summary-bar__note">{extra.conclusion.slice(0, 60)}{extra.conclusion.length > 60 ? '…' : ''}</span>
             )}
-            {selected.visitId && onEditVisit && <Btn ghost onClick={() => onEditVisit(selected.visitId)}>编辑就诊</Btn>}
             <Btn ghost onClick={() => onOpen && onOpen(selected)}>完整报告 →</Btn>
           </div>
 
@@ -1843,7 +1805,7 @@ const TabCheckup = ({ data, memberKey, reports, onOpen, onAddLab, onEditLab, onD
                 <div className="mono" style={{ color: 'var(--ink-soft)' }}>{abnormalItems.length} 项 · 点击行可折叠趋势</div>
               </div>
               {abnormalItems.map((item, i) => (
-                <CheckupLabRow key={`${item.k}-${i}`} item={item} memberKey={memberKey} autoExpanded={false} onEdit={onEditLab} onDelete={onDeleteLab} />
+                <CheckupLabRow key={`${item.k}-${i}`} item={item} memberKey={memberKey} autoExpanded={false} />
               ))}
             </div>
           )}
@@ -1855,7 +1817,7 @@ const TabCheckup = ({ data, memberKey, reports, onOpen, onAddLab, onEditLab, onD
                 <div className="mono">{normalItems.length} 项&nbsp;&nbsp;{showNormal ? '▲ 收起' : '▼ 展开'}</div>
               </button>
               {showNormal && normalItems.map((item, i) => (
-                <CheckupLabRow key={`${item.k}-${i}`} item={item} memberKey={memberKey} autoExpanded={false} onEdit={onEditLab} onDelete={onDeleteLab} />
+                <CheckupLabRow key={`${item.k}-${i}`} item={item} memberKey={memberKey} autoExpanded={false} />
               ))}
             </div>
           )}
@@ -1865,7 +1827,8 @@ const TabCheckup = ({ data, memberKey, reports, onOpen, onAddLab, onEditLab, onD
   );
 };
 
-const TabReports = ({ reports, kind, onOpen, onAdd, onEdit, onDelete }) => (
+const TabReports = ({ reports, kind, onOpen, onAdd, onEdit, onDelete }) => {
+  return (
   <div>
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
       <DashLabel right={`${reports.length} 条 · 由 Agent 自动写入`}>全部{kind}记录</DashLabel>
@@ -1874,8 +1837,8 @@ const TabReports = ({ reports, kind, onOpen, onAdd, onEdit, onDelete }) => (
       <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>暂无 {kind} 记录</div>
     ) : (
       <div className="row-list">
-        {reports.map(r => (
-          <div key={r.id} className="row">
+        {reports.map((r) => (
+          <div key={r.id} className="row row--clickable" onClick={() => onOpen && onOpen(r)} title="点击查看详情">
             <span className="mono" style={{ color: 'var(--ink-soft)' }}>{r.d}</span>
             <div>
               <div style={{ fontFamily: 'Caveat, cursive', fontSize: 20, fontWeight: 700 }}>{r.t}</div>
@@ -1886,17 +1849,17 @@ const TabReports = ({ reports, kind, onOpen, onAdd, onEdit, onDelete }) => (
               {r.kind === 'visit' && r.diagCount > 0 && <Chip>异常 {r.diagCount} 项</Chip>}
               {r.kind === 'attachment' && <Chip>{r.tag || '附件'}</Chip>}
             </div>
-            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-              {onEdit && <Btn ghost onClick={() => onEdit(r)}>编辑</Btn>}
-              {onDelete && <Btn ghost onClick={() => onDelete(r)}>删除</Btn>}
-              <Btn ghost onClick={() => onOpen && onOpen(r)}>打开 →</Btn>
+            <div className="row-menu" onClick={(e) => e.stopPropagation()}>
+              {onEdit && <IconBtn title="编辑记录" onClick={() => onEdit(r)}>✎</IconBtn>}
+              {onDelete && <IconBtn title="删除记录" danger onClick={() => onDelete(r)}>🗑</IconBtn>}
             </div>
           </div>
         ))}
       </div>
     )}
   </div>
-);
+  );
+};
 
 const SEVERITY_BADGE_VARIANTS = {
   '严重': 'severity-severe',
@@ -1932,6 +1895,14 @@ const parseMedName = (name) => {
   return { generic: name || '', brand: '' };
 };
 
+/* 在用/已停由结束日期单来源推导：空或未来 = 在用；过去 = 已停。
+   ongoing 只做兼容：老数据里已停但没填结束日期的，继续判停。 */
+const isMedActive = (m, today = todayIso()) => {
+  const end = String(m?.end_date || '').slice(0, 10);
+  if (end) return end > today;
+  return m?.ongoing !== false;
+};
+
 const medDaysText = (med) => {
   if (!med.start_date) return null;
   const start = new Date(med.start_date);
@@ -1947,7 +1918,7 @@ const MedCard = ({ med, onEdit, onStop, onDelete, historyCount = 0, expanded = f
   const daysText = medDaysText(med);
   const usage = [med.dose, med.route, med.freq].filter(Boolean).join('  ·  ');
   return (
-    <div className="sketch" style={{ padding: 14, background: med.ongoing ? 'var(--paper)' : 'var(--paper-2)', opacity: med.ongoing ? 1 : 0.78 }}>
+    <div className="sketch" style={{ padding: 14, background: isMedActive(med) ? 'var(--paper)' : 'var(--paper-2)', opacity: isMedActive(med) ? 1 : 0.78 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontFamily: 'Caveat, cursive', fontSize: 22, fontWeight: 700, lineHeight: 1.2, wordBreak: 'break-all' }}>{generic}</div>
@@ -1955,14 +1926,14 @@ const MedCard = ({ med, onEdit, onStop, onDelete, historyCount = 0, expanded = f
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end', flexShrink: 0 }}>
           <Chip variant={cat.color}>{cat.label}</Chip>
-          <Chip variant={med.ongoing ? 'ok' : ''}>{med.ongoing ? '在用' : '已停'}</Chip>
+          <Chip variant={isMedActive(med) ? 'ok' : ''}>{isMedActive(med) ? '在用' : '已停'}</Chip>
         </div>
       </div>
       <div className="mono" style={{ background: 'var(--paper-2)', padding: '5px 8px', borderRadius: 5, marginBottom: 8, fontSize: 11 }}>
         {usage || '用法未录'}
       </div>
       <div className="mono" style={{ color: 'var(--ink-soft)', fontSize: 10 }}>
-        {med.start_date || '?'} → {med.ongoing ? '至今' : (med.end_date || '?')}
+        {med.start_date || '?'} → {isMedActive(med) ? '至今' : (med.end_date || '?')}
         {daysText && <span style={{ marginLeft: 8, color: 'var(--ink)', fontWeight: 600 }}>共 {daysText}</span>}
       </div>
       {med.notes && (
@@ -1980,10 +1951,10 @@ const MedCard = ({ med, onEdit, onStop, onDelete, historyCount = 0, expanded = f
             {expanded ? '▲ 收起历史' : `▼ 另有 ${historyCount} 次处方记录`}
           </button>
         ) : <span />}
-        <div style={{ display: 'flex', gap: 6 }}>
-          <Btn ghost onClick={() => onEdit(med)}>编辑</Btn>
-          {med.ongoing && <Btn ghost onClick={() => onStop(med)}>停用</Btn>}
-          <Btn ghost onClick={() => onDelete(med)}>删除</Btn>
+        <div style={{ display: 'flex', gap: 2 }}>
+          <IconBtn title="编辑用药" onClick={() => onEdit(med)}>✎</IconBtn>
+          {isMedActive(med) && <IconBtn title="停用" warn onClick={() => onStop(med)}>⏸</IconBtn>}
+          <IconBtn title="删除用药" danger onClick={() => onDelete(med)}>🗑</IconBtn>
         </div>
       </div>
     </div>
@@ -2000,12 +1971,12 @@ const MedHistoryRow = ({ med, onEdit, onDelete }) => {
       borderLeft: '3px solid var(--rule)',
     }}>
       <span className="mono" style={{ color: 'var(--ink-ghost)', fontSize: 10, flexShrink: 0 }}>
-        {med.start_date || '?'} → {med.ongoing ? '至今' : (med.end_date || '?')}
+        {med.start_date || '?'} → {isMedActive(med) ? '至今' : (med.end_date || '?')}
       </span>
       <span className="mono" style={{ color: 'var(--ink-soft)', fontSize: 10, flex: 1 }}>{usage || '用法未录'}</span>
-      <Chip variant={med.ongoing ? 'ok' : ''}>{med.ongoing ? '在用' : '已停'}</Chip>
-      <Btn ghost onClick={() => onEdit(med)}>编辑</Btn>
-      <Btn ghost onClick={() => onDelete(med)}>删除</Btn>
+      <Chip variant={isMedActive(med) ? 'ok' : ''}>{isMedActive(med) ? '在用' : '已停'}</Chip>
+      <IconBtn title="编辑用药" onClick={() => onEdit(med)}>✎</IconBtn>
+      <IconBtn title="删除用药" danger onClick={() => onDelete(med)}>🗑</IconBtn>
     </div>
   );
 };
@@ -2014,8 +1985,8 @@ const TabMeds = ({ meds, visits = [], onAdd, onEdit, onStop, onDelete }) => {
   const [filter, setFilter] = React.useState('在用');
   const [selectedVisit, setSelectedVisit] = React.useState(null);
   const [expandedNames, setExpandedNames] = React.useState(new Set());
-  const active = meds.filter(m => m.ongoing);
-  const stopped = meds.filter(m => !m.ongoing);
+  const active = meds.filter(isMedActive);
+  const stopped = meds.filter(m => !isMedActive(m));
   const byStatus = filter === '在用' ? active : filter === '已停' ? stopped : meds;
   const displayed = selectedVisit != null ? byStatus.filter(m => m.visit_id === selectedVisit) : byStatus;
 
@@ -2036,7 +2007,7 @@ const TabMeds = ({ meds, visits = [], onAdd, onEdit, onStop, onDelete }) => {
   /* 每个药名组内：在用优先，再按开始日期倒序 */
   Object.values(grouped).forEach(({ byName }) => {
     Object.values(byName).forEach(arr => arr.sort((a, b) => {
-      if (a.ongoing !== b.ongoing) return b.ongoing ? 1 : -1;
+      if (isMedActive(a) !== isMedActive(b)) return isMedActive(b) ? 1 : -1;
       return (b.start_date || '').localeCompare(a.start_date || '');
     }));
   });
@@ -2195,10 +2166,10 @@ const TabAttachments = ({ reports, onOpen, onEditAttachment, onDeleteAttachment 
             <div className="attachment-card__title">{r.t}</div>
             <div className="attachment-card__date mono">{r.d}</div>
             {onDeleteAttachment && (
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                {onEditAttachment && <Btn ghost onClick={(event) => stopCardAction(event, () => onEditAttachment(r))}>编辑</Btn>}
-                <Btn ghost onClick={(event) => stopCardAction(event, () => onDeleteAttachment(r, false))}>移除记录</Btn>
-                <Btn ghost onClick={(event) => stopCardAction(event, () => onDeleteAttachment(r, true))}>删除记录+文件</Btn>
+              <div style={{ display: 'flex', gap: 2, flexWrap: 'wrap', marginTop: 8 }}>
+                {onEditAttachment && <IconBtn title="编辑附件信息" onClick={(event) => stopCardAction(event, () => onEditAttachment(r))}>✎</IconBtn>}
+                <IconBtn title="移除记录（保留磁盘文件）" onClick={(event) => stopCardAction(event, () => onDeleteAttachment(r, false))}>🗑</IconBtn>
+                <IconBtn title="删除记录+文件（彻底删除）" danger onClick={(event) => stopCardAction(event, () => onDeleteAttachment(r, true))}>🗑+</IconBtn>
               </div>
             )}
           </div>
@@ -2208,68 +2179,12 @@ const TabAttachments = ({ reports, onOpen, onEditAttachment, onDeleteAttachment 
   );
 };
 
-const TabReminders = ({ items, onAdd, onEdit, onDone, onSkip, onDelete }) => (
-  <div>
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-      <DashLabel right={`${items.length} 条`}>我的提醒</DashLabel>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-        {onAdd && <Btn primary onClick={onAdd}>+ 新增提醒</Btn>}
-      </div>
-    </div>
-    {items.length === 0 ? (
-      <div style={{ padding: 40, textAlign: 'center', color: 'var(--ink-soft)' }}>无提醒</div>
-    ) : (
-      <div className="row-list reminders-row-list">
-        {items.map(r => {
-          const overdue = daysFromToday(r.date) < 0;
-          return (
-            <div key={r.id} className={`row reminder-row ${overdue ? 'is-overdue' : ''}`}>
-              <span className="mono reminder-row__date">{r.date}</span>
-              <div className="reminder-row__body">
-                <div className="reminder-row__title">{r.title}</div>
-                <div className="reminder-row__tags">
-                  <Chip variant={r.kind === '宠物' || r.kind === '驱虫' ? 'accent-3' : r.kind === '就医' ? 'accent' : 'accent-2'}>{r.kind}</Chip>
-                  {r.source === 'auto' && <Chip variant="accent-3">自动</Chip>}
-                  {overdue && <Chip variant="danger">已过期</Chip>}
-                </div>
-              </div>
-              <div className="reminder-row__actions">
-                {onEdit && <Btn ghost onClick={() => onEdit(r)}>编辑</Btn>}
-                {onDone && <Btn ghost onClick={() => onDone(r)}>完成</Btn>}
-                {onSkip && r.source === 'auto' && overdue && <Btn ghost onClick={() => onSkip(r)}>下次再说</Btn>}
-                {onDelete && <Btn ghost onClick={() => onDelete(r)}>删除</Btn>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    )}
-  </div>
-);
-
 const daysBetween = (date, base = todayIso()) => {
   if (!date) return null;
   const a = new Date(`${base}T00:00:00`);
   const b = new Date(`${date}T00:00:00`);
   if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
   return Math.round((b - a) / 86400000);
-};
-
-const relativeDueText = (date) => {
-  const days = daysBetween(date);
-  if (days === null) return '未定';
-  if (days < 0) return `逾期 ${Math.abs(days)} 天`;
-  if (days === 0) return '今天';
-  if (days === 1) return '明天';
-  return `${days} 天后`;
-};
-
-const petReminderVariant = (date) => {
-  const days = daysBetween(date);
-  if (days === null) return '';
-  if (days < 0) return 'danger';
-  if (days <= 7) return 'accent';
-  return 'accent-3';
 };
 
 const recordKindVariant = (kind) => {
@@ -2285,16 +2200,12 @@ const latestDateOf = (items, key = 'date') => items.reduce((latest, item) => {
   return date && (!latest || date > latest) ? date : latest;
 }, '');
 
-const TabPetOverview = ({ member, labs, visits, meds, weights, reminders, attachments, onOpen }) => {
+const TabPetOverview = ({ member, labs, visits, meds, weights, careLogs, attachments, onOpen }) => {
   const latestWeight = weights[weights.length - 1];
   const prevWeight = weights.length >= 2 ? weights[weights.length - 2] : null;
   const weightDelta = latestWeight && prevWeight ? latestWeight.weight_kg - prevWeight.weight_kg : null;
-  const activeMeds = meds.filter(m => m.ongoing);
+  const activeMeds = meds.filter(isMedActive);
   const abnormalLabs = latestByName(labs).filter(l => ['high', 'low', 'abnormal'].includes(l.status));
-  const openReminders = reminders
-    .filter(r => !r.done)
-    .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-    .slice(0, 5);
   const primaryAttachmentByVisit = new Map();
   attachments.map(reportFromAttachment).forEach(a => {
     if (!a.visitId) return;
@@ -2329,18 +2240,16 @@ const TabPetOverview = ({ member, labs, visits, meds, weights, reminders, attach
     date: m.start_date || m.end_date || '',
     kind: '用药',
     title: m.name || '用药记录',
-    meta: [m.dose, m.freq, m.ongoing ? '在用' : '已停'].filter(Boolean).join(' · '),
+    meta: [m.dose, m.freq, isMedActive(m) ? '在用' : '已停'].filter(Boolean).join(' · '),
   }));
-  const careRecords = reminders
-    .filter(r => r.done)
+  const careRecords = careLogs
     .map(r => ({
       id: `care-${r.id}`,
       date: r.date,
       kind: petKindLabel(r.kind, '记事'),
-      title: r.title,
+      title: r.notes || r.kind,
       meta: '记事记录',
-    }))
-    .filter(r => PET_CARE_KIND_SET.has(r.kind));
+    }));
   const recentRecords = [...visitRecords, ...weightRecords.slice(-3), ...medRecords, ...careRecords]
     .filter(r => r.date)
     .sort((a, b) => b.date.localeCompare(a.date))
@@ -2355,6 +2264,7 @@ const TabPetOverview = ({ member, labs, visits, meds, weights, reminders, attach
     return acc;
   }, {});
   const careSummary = Object.entries(careCounts).map(([k, v]) => `${k} ${v} 次`).join(' · ');
+  const homeDays = typeof familyDaysSince === 'function' ? familyDaysSince(member.home_date) : null;
   return (
     <div className="pet-overview">
       <div className="pet-overview__lead">
@@ -2382,25 +2292,6 @@ const TabPetOverview = ({ member, labs, visits, meds, weights, reminders, attach
               )}
             </div>
           </div>
-        </div>
-
-        <div className="sketch pet-reminders-card">
-          <DashLabel right={`${openReminders.length} 条`}>近期事项</DashLabel>
-          {openReminders.length === 0 ? (
-            <div className="pet-empty">暂无待办，最近一次健康记录是 {latestUpdate || '暂无'}。</div>
-          ) : (
-            <div className="pet-task-list">
-              {openReminders.map(r => (
-                <div key={r.id} className="pet-task">
-                  <Chip variant={petReminderVariant(r.date)}>{relativeDueText(r.date)}</Chip>
-                  <div>
-                    <strong>{r.title}</strong>
-                    <span className="mono">{petKindLabel(r.kind)} · {r.date || '未定日期'}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </div>
 
@@ -2459,7 +2350,7 @@ const TabPetOverview = ({ member, labs, visits, meds, weights, reminders, attach
           <DashLabel>档案</DashLabel>
           <div className="pet-archive-card__org">{member.doctor || '未录入医院'}</div>
           <div className="mono" style={{ color: 'var(--ink-soft)' }}>
-            {[member.breed, member.home_date ? `到家 ${member.home_date}` : null].filter(Boolean).join(' · ') || '基础信息未录入'}
+            {[member.breed, homeDays === null ? null : `到家${homeDays}天`].filter(Boolean).join(' · ') || '基础信息未录入'}
           </div>
           <div className="mono" style={{ color: 'var(--ink-soft)' }}>
             最近就诊 · {latestDateOf(visits) || '暂无'}
@@ -2473,12 +2364,188 @@ const TabPetOverview = ({ member, labs, visits, meds, weights, reminders, attach
   );
 };
 
-const TabPetCare = ({ reminders, attachments, onAdd, onEdit, onDelete }) => {
+const QuickIcon = ({ name }) => (
+  <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    {name === 'weight' && (
+      <>
+        <rect x="5.5" y="2.5" width="13" height="19" rx="3" />
+        <rect x="9" y="6" width="6" height="3.4" rx="1" />
+        <line x1="9.5" y1="15" x2="14.5" y2="15" />
+        <line x1="10.5" y1="18" x2="13.5" y2="18" />
+      </>
+    )}
+    {name === '驱虫' && (
+      <>
+        <ellipse cx="12" cy="13.2" rx="4" ry="5.3" />
+        <circle cx="12" cy="5.4" r="1.6" />
+        <line x1="10.9" y1="4" x2="9.6" y2="2.2" />
+        <line x1="13.1" y1="4" x2="14.4" y2="2.2" />
+        <line x1="8.1" y1="11" x2="5.2" y2="9.6" />
+        <line x1="8" y1="14.5" x2="5" y2="14.5" />
+        <line x1="8.7" y1="17.4" x2="6.2" y2="18.8" />
+        <line x1="15.9" y1="11" x2="18.8" y2="9.6" />
+        <line x1="16" y1="14.5" x2="19" y2="14.5" />
+        <line x1="15.3" y1="17.4" x2="17.8" y2="18.8" />
+      </>
+    )}
+    {name === '洗澡' && (
+      <>
+        <path d="M4 3.5h7" />
+        <path d="M11 3.5v2.5" />
+        <path d="M8 6l-2.5 3h7L10 6" />
+        <line x1="7.5" y1="12" x2="7.5" y2="14.5" />
+        <line x1="10" y1="12" x2="10" y2="14.5" />
+        <line x1="12.5" y1="12" x2="12.5" y2="14.5" />
+        <path d="M6.5 18.5h11" />
+      </>
+    )}
+    {name === '换猫砂' && (
+      <>
+        <path d="M3.5 8L12 3.5 20.5 8v11a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1z" />
+        <line x1="3.5" y1="8" x2="12" y2="12.5" />
+        <line x1="20.5" y1="8" x2="12" y2="12.5" />
+        <line x1="12" y1="12.5" x2="12" y2="20" />
+      </>
+    )}
+    {name === 'note' && (
+      <>
+        <rect x="5" y="4" width="14" height="17" rx="2" />
+        <rect x="9" y="2.5" width="6" height="3.5" rx="1" />
+        <line x1="8.5" y1="11" x2="15.5" y2="11" />
+        <line x1="8.5" y1="14.5" x2="15.5" y2="14.5" />
+        <line x1="8.5" y1="18" x2="13" y2="18" />
+      </>
+    )}
+  </svg>
+);
+
+// 方案 A：一键速记条。记事点两下（第二下是确认），体重展开直接输数字。
+const PetQuickBar = ({ mode = 'all', weights, lastCare, saving, onQuickCare, onQuickWeight }) => {
+  const [armed, setArmed] = React.useState(null);
+  const [showWeight, setShowWeight] = React.useState(false);
+  const [weightInput, setWeightInput] = React.useState('');
+  const armTimer = React.useRef(null);
+  React.useEffect(() => () => { if (armTimer.current) clearTimeout(armTimer.current); }, []);
+  const latest = weights && weights.length ? weights[weights.length - 1] : null;
+  // 体重单入口模式：输入框常驻，默认填上次体重；新记录进来后自动跟进。
+  const latestId = latest?.id ?? null;
+  const prevLatestId = React.useRef(null);
+  if (mode === 'weight' && prevLatestId.current !== latestId) {
+    prevLatestId.current = latestId;
+    setWeightInput(latest ? Number(latest.weight_kg).toFixed(2) : '');
+  }
+
+  const careSub = (kind) => {
+    const d = lastCare?.[kind];
+    if (!d) return '还没记过';
+    const diff = daysFromToday(d);
+    if (diff === null) return String(d).slice(5);
+    if (diff === 0) return '今天已记';
+    if (diff < 0) return `${-diff} 天前`;
+    return `${diff} 天后`;
+  };
+
+  const tapCare = (kind) => {
+    if (saving) return;
+    if (armed === kind) {
+      if (armTimer.current) clearTimeout(armTimer.current);
+      setArmed(null);
+      onQuickCare(kind);
+    } else {
+      setArmed(kind);
+      if (armTimer.current) clearTimeout(armTimer.current);
+      armTimer.current = setTimeout(() => setArmed(null), 4000);
+    }
+  };
+
+  const openWeight = () => {
+    if (saving) return;
+    setArmed(null);
+    setWeightInput(latest ? Number(latest.weight_kg).toFixed(2) : '');
+    setShowWeight(true);
+  };
+
+  const submitWeight = (e) => {
+    e.preventDefault();
+    const n = extractNumber(weightInput);
+    if (n === null || !(n > 0)) return;
+    onQuickWeight({ date: todayIso(), weight_kg: Math.round(n * 100) / 100 });
+    setShowWeight(false);
+  };
+
+  if (mode === 'weight') {
+    const typed = extractNumber(weightInput);
+    const delta = latest && typed !== null ? Math.round((typed - latest.weight_kg) * 100) / 100 : null;
+    return (
+      <form className="journal" style={{ marginBottom: 12 }} onSubmit={submitWeight}>
+        <span className="tape" aria-hidden="true" />
+        <div className="j-date">
+          <span>{friendlyDate(todayIso())}</span>
+          {latest && <span>上次 {formatWeight(latest.weight_kg)} kg</span>}
+        </div>
+        <div className="j-hand">今天体重 <input id="quick-weight-input" className="j-winput" required type="number" step="0.01" min="0" inputMode="decimal" value={weightInput} onChange={e => setWeightInput(e.target.value)} placeholder={latest ? Number(latest.weight_kg).toFixed(2) : '4.20'} aria-label="今天体重 kg" /> kg</div>
+        {delta !== null && Math.abs(delta) >= 0.005 && (
+          <div className={`j-delta${delta > 0 ? ' up' : ''}`}>{delta > 0 ? `↑ ${delta.toFixed(2)}` : `↓ ${Math.abs(delta).toFixed(2)}`} kg · 较上次</div>
+        )}
+        <div className="form-actions">
+          <Btn primary type="submit">{saving ? '保存中…' : '记录体重'}</Btn>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <div className={`quickbar cols-${(mode !== 'care' ? 1 : 0) + (mode !== 'weight' ? PET_CARE_KINDS.length : 0)}`}>
+        {mode !== 'care' && (
+          <button type="button" className="qbtn" disabled={saving} onClick={openWeight}>
+            <QuickIcon name="weight" />
+            <span className="qbtn__t">称重</span>
+            <span className="qbtn__s">{latest ? `上次 ${formatWeight(latest.weight_kg)} kg` : '还没记过'}</span>
+          </button>
+        )}
+        {mode !== 'weight' && PET_CARE_KINDS.map(kind => (
+          <button
+            key={kind}
+            type="button"
+            className={`qbtn${armed === kind ? ' armed' : ''}`}
+            disabled={saving}
+            onClick={() => tapCare(kind)}
+          >
+            <QuickIcon name={kind} />
+            <span className="qbtn__t">{armed === kind ? '再点确认' : kind}</span>
+            <span className="qbtn__s">{armed === kind ? '4 秒内有效' : careSub(kind)}</span>
+          </button>
+        ))}
+      </div>
+      {showWeight && (
+        <form className="qweight sketch" onSubmit={submitWeight}>
+          <div className="qweight__label">今天体重（kg，保留两位小数）</div>
+          <div className="qweight__row">
+            <input
+              required
+              type="number"
+              step="0.01"
+              min="0"
+              inputMode="decimal"
+              autoFocus
+              value={weightInput}
+              onChange={e => setWeightInput(e.target.value)}
+              placeholder={latest ? Number(latest.weight_kg).toFixed(2) : '4.20'}
+            />
+            <Btn primary type="submit">{saving ? '保存中…' : '保存'}</Btn>
+            <Btn ghost onClick={() => setShowWeight(false)}>取消</Btn>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+};
+
+const TabPetCare = ({ careLogs, attachments, onAdd, onEdit, onDelete }) => {
   const [filter, setFilter] = React.useState('全部');
-  const careReminders = reminders
-    .filter(r => r.done)
-    .map(r => ({ ...r, kind: r.kind || '记事' }))
-    .filter(r => PET_CARE_KIND_SET.has(r.kind));
+  const careReminders = careLogs
+    .map(r => ({ ...r, kind: r.kind || '记事' }));
   const careAttachments = attachments
     .map(a => ({ id: `att-${a.id}`, date: a.date, title: a.title, kind: a.tag || '附件', done: true }))
     .filter(a => PET_CARE_KIND_SET.has(a.kind));
@@ -2489,7 +2556,7 @@ const TabPetCare = ({ reminders, attachments, onAdd, onEdit, onDelete }) => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <DashLabel right={`${displayed.length} 条`}>记事</DashLabel>
-        {onAdd && <Btn primary onClick={onAdd}>+ 添加记事</Btn>}
+        {onAdd && <Btn ghost onClick={onAdd}>+ 详细记一笔</Btn>}
       </div>
       {kinds.length > 2 && (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginBottom: 10 }}>
@@ -2511,14 +2578,16 @@ const TabPetCare = ({ reminders, attachments, onAdd, onEdit, onDelete }) => {
             <div key={r.id} className="row reminder-row care-row">
               <span className="mono reminder-row__date">{r.date}</span>
               <div className="reminder-row__body">
-                <div className="reminder-row__title">{r.title}</div>
-                <div className="reminder-row__tags">
-                  <Chip variant="accent-3">{r.kind}</Chip>
-                </div>
+                <div className="reminder-row__title">{r.kind}</div>
+                {r.notes ? (
+                  <div className="reminder-row__tags">
+                    <Chip variant="accent-3" title={r.notes}>{r.notes}</Chip>
+                  </div>
+                ) : null}
               </div>
               <div className="reminder-row__actions">
-                {onEdit && typeof r.id === 'number' && <Btn ghost onClick={() => onEdit(r)}>编辑</Btn>}
-                {onDelete && typeof r.id === 'number' && <Btn ghost onClick={() => onDelete(r)}>删除</Btn>}
+                {onEdit && typeof r.id === 'number' && <IconBtn title="编辑记事" onClick={() => onEdit(r)}>✎</IconBtn>}
+                {onDelete && typeof r.id === 'number' && <IconBtn title="删除记事" danger onClick={() => onDelete(r)}>🗑</IconBtn>}
               </div>
             </div>
           ))}
@@ -2551,7 +2620,7 @@ const TabVax = ({ labs, attachments, onAddLab }) => {
   );
 };
 
-const TabPetWeight = ({ member, weights, onAdd, onDelete }) => {
+const TabPetWeight = ({ member, weights, onDelete }) => {
   const [selectedWeightId, setSelectedWeightId] = React.useState(null);
   const chartPoints = weights.map(w => ({ ...w, value: w.weight_kg, notes: weightPointNote(member, w) }));
   const latest = weights[weights.length - 1];
@@ -2567,7 +2636,6 @@ const TabPetWeight = ({ member, weights, onAdd, onDelete }) => {
     <div>
       <div className="pet-weight-toolbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <DashLabel right={`${weights.length} 条`}>体重曲线</DashLabel>
-        <Btn primary onClick={onAdd}>+ 记录体重</Btn>
       </div>
       <div className="sketch" style={{ padding: 18 }}>
         <div className="pet-weight-summary" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
@@ -2610,7 +2678,7 @@ const TabPetWeight = ({ member, weights, onAdd, onDelete }) => {
               <span className="mono">{w.date}</span>
               <div>{w.notes || '体重记录'}</div>
               <Chip style={{ justifySelf: 'end' }}>{formatWeight(w.weight_kg)} kg</Chip>
-              <Btn ghost onClick={() => onDelete(w)}>删除</Btn>
+              <IconBtn title="删除体重记录" danger onClick={() => onDelete(w)}>🗑</IconBtn>
             </div>
           ))}
         </div>

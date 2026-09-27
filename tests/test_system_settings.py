@@ -62,8 +62,8 @@ class SystemSettingsTest(unittest.TestCase):
 
     def test_resolved_host_prefers_env_over_file(self):
         from services import system_settings
-        system_settings.save_settings({"host": "0.0.0.0"})
-        self.assertEqual(system_settings.resolved_host(), "0.0.0.0")
+        system_settings.save_settings({"host": "100.90.80.70"})
+        self.assertEqual(system_settings.resolved_host(), "100.90.80.70")
         os.environ["HEALTH_HOST"] = "127.0.0.1"
         self.assertEqual(system_settings.resolved_host(), "127.0.0.1")
 
@@ -77,15 +77,21 @@ class SystemSettingsTest(unittest.TestCase):
         with patch("services.system_settings.detect_tailscale", return_value={"installed": True, "connected": False, "ip": None}):
             self.assertIsNone(system_settings.tailscale_bind_host())
 
-    def test_remote_access_is_disabled_even_with_active_tailscale_ip(self):
-        # 远程访问已停用：即使检测到 Tailscale，开远程也必须拒绝（Tailscale 检测函数本身保留）。
+    def test_remote_access_tailscale_only(self):
+        # Tailscale-only：有 100.x 才放行，无连接仍拒绝，关闭切回本机。
+        from services import system_settings
         with TestClient(self.app) as client:
             with patch("services.system_settings.tailscale_bind_host", return_value="100.90.80.70"):
-                refused = client.post("/api/settings/host", json={"enable_remote": True})
-            self.assertEqual(refused.status_code, 409)
+                ok = client.post("/api/settings/host", json={"enable_remote": True})
+            self.assertEqual(ok.status_code, 200)
+            self.assertEqual(ok.json()["host"], "100.90.80.70")
+            self.assertEqual(system_settings.load_settings()["host"], "100.90.80.70")
             with patch("services.system_settings.tailscale_bind_host", return_value=None):
                 refused = client.post("/api/settings/host", json={"enable_remote": True})
             self.assertEqual(refused.status_code, 409)
+            off = client.post("/api/settings/host", json={"enable_remote": False})
+            self.assertEqual(off.status_code, 200)
+            self.assertEqual(off.json()["host"], "127.0.0.1")
 
     def test_resolve_bind_host_with_heal_local(self):
         from services import system_settings
@@ -130,6 +136,17 @@ class SystemSettingsTest(unittest.TestCase):
         self.assertEqual(host, "100.9.9.9")
         self.assertIn("HEALTH_HOST", warning or "")
         self.assertEqual(system_settings.load_settings()["host"], "100.1.2.3")
+
+    def test_tailscale_ip_range_check(self):
+        from services import system_settings
+        for host in ("100.64.0.1", "100.90.80.70", "100.126.18.110", "100.127.255.255"):
+            self.assertTrue(system_settings.is_tailscale_ip(host), host)
+            self.assertTrue(system_settings.is_allowed_bind_host(host), host)
+        for host in ("0.0.0.0", "127.0.0.1", "192.168.1.10", "100.63.1.1", "100.128.0.1", "8.8.8.8", None, ""):
+            self.assertFalse(system_settings.is_tailscale_ip(host), host)
+        self.assertTrue(system_settings.is_allowed_bind_host("127.0.0.1"))
+        self.assertFalse(system_settings.is_allowed_bind_host("0.0.0.0"))
+        self.assertFalse(system_settings.is_allowed_bind_host("192.168.1.10"))
 
     def test_bind_warning_surfaced_in_system_settings(self):
         with TestClient(self.app) as client:

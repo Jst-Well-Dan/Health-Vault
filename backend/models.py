@@ -176,33 +176,22 @@ class WeightOut(WeightCreate):
     id: int
 
 
-class ReminderCreate(BaseModel):
+class PetCareLogCreate(BaseModel):
     member_key: str
     date: str
-    title: str
-    kind: str
-    priority: str = "normal"
-    done: bool = False
+    kind: Literal['驱虫', '洗澡', '换猫砂']
     notes: Optional[str] = None
 
 
-class ReminderUpdate(BaseModel):
+class PetCareLogUpdate(BaseModel):
     member_key: Optional[str] = None
     date: Optional[str] = None
-    title: Optional[str] = None
-    kind: Optional[str] = None
-    priority: Optional[str] = None
-    done: Optional[bool] = None
+    kind: Optional[Literal['驱虫', '洗澡', '换猫砂']] = None
     notes: Optional[str] = None
 
 
-class ReminderOut(ReminderCreate):
+class PetCareLogOut(PetCareLogCreate):
     id: int
-    done: bool = False
-    done_at: Optional[str] = None
-    source: str = "manual"
-    rule_key: Optional[str] = None
-    auto_key: Optional[str] = None
 
 
 class AttachmentCreate(BaseModel):

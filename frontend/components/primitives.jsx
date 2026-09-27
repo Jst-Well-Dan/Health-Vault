@@ -60,6 +60,58 @@ const Btn = ({ children, primary, ghost, disabled, onClick, style, type = 'butto
   >{children}</button>
 );
 
+/* 手绘线条小图标：与 QuickIcon 同款 1.8px 圆头线条，贴合纸面主题 */
+const SketchIcon = ({ name }) => {
+  if (name === 'stop') {
+    return (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" />
+        <line x1="10" y1="9" x2="10" y2="15" />
+        <line x1="14" y1="9" x2="14" y2="15" />
+      </svg>
+    );
+  }
+  if (name === 'delete-all') {
+    return (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <polyline points="3 6 5 6 21 6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <circle cx="18.5" cy="18.5" r="4.4" fill="var(--paper)" stroke="none" />
+        <line x1="18.5" y1="16.3" x2="18.5" y2="20.7" />
+        <line x1="16.3" y1="18.5" x2="20.7" y2="18.5" />
+      </svg>
+    );
+  }
+  if (name === 'delete') {
+    return (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <polyline points="3 6 5 6 21 6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <line x1="10" y1="11" x2="10" y2="17" />
+        <line x1="14" y1="11" x2="14" y2="17" />
+      </svg>
+    );
+  }
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+    </svg>
+  );
+};
+
+const GLYPH_ICON = { '✎': 'edit', '🗑': 'delete', '🗑+': 'delete-all', '⏸': 'stop' };
+
+const IconBtn = ({ children, title, danger, warn, onClick, style }) => (
+  <button
+    type="button"
+    className={`icon-btn ${danger ? 'danger' : ''} ${warn ? 'warn' : ''}`}
+    title={title || ''}
+    aria-label={title || '操作'}
+    onClick={onClick}
+    style={style}
+  >{GLYPH_ICON[children] ? <SketchIcon name={GLYPH_ICON[children]} /> : children}</button>
+);
+
 // Sketchy line chart
 const LineChart = ({ points = [], w = 340, h = 80, color, refBand, labels, unit }) => {
   if (!points.length) return null;
@@ -311,4 +363,4 @@ const Tile = ({ k, v, u, warn, trend }) => (
   </div>
 );
 
-Object.assign(window, { HoverTip, Placeholder, Chip, Stamp, Avatar, memberAvatarSrc, Scribble, Btn, LineChart, EChartLine, Bars, DashLabel, Tile });
+Object.assign(window, { HoverTip, Placeholder, Chip, Stamp, Avatar, memberAvatarSrc, Scribble, Btn, IconBtn, LineChart, EChartLine, Bars, DashLabel, Tile });
